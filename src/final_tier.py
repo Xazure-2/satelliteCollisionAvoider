@@ -112,10 +112,11 @@ def make_model(spec, columns):
         ('numeric', numeric, columns),
         ('category', OneHotEncoder(handle_unknown='ignore', sparse_output=False), ['latest_c_object_type']),
     ], remainder='drop', sparse_threshold=0)
+    params = spec.get('params') or {}  # optional hyperparameter overrides (nested search)
     if spec['kind'] == 'change_regressor':
-        estimator = HistGradientBoostingRegressor(**PARAMETERS)
+        estimator = HistGradientBoostingRegressor(**dict(PARAMETERS, **params))
     else:
-        estimator = HistGradientBoostingClassifier(**CLASSIFIER, class_weight=spec.get('class_weight'))
+        estimator = HistGradientBoostingClassifier(**dict(CLASSIFIER, **params), class_weight=spec.get('class_weight'))
     return Pipeline([('preprocess', preprocessing), ('estimator', estimator)])
 
 
@@ -306,44 +307,58 @@ def load(root=ROOT):
     return data, labels, features, messages
 
 
+def assign_folds(dev, folds=FOLDS, seed=42):
+    """Stratified event folds; every experiment uses these same folds."""
+    fold = np.empty(len(dev), int)
+    for k, (_, idx) in enumerate(StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed).split(dev, dev.final_tier)):
+        fold[idx] = k
+    return fold
+
+
+def oof_model_scores(spec, dev, fold, prefixes=None):
+    """Out-of-fold (critical, elevated) scores for one non-hybrid spec."""
+    scores = pd.DataFrame(index=dev.index, columns=['critical', 'elevated'], dtype=float)
+    for k in np.unique(fold):
+        model = fit_spec(spec, dev.loc[fold != k], prefixes)
+        scores.loc[fold == k] = model_scores(model, spec, dev.loc[fold == k]).to_numpy()
+    return scores
+
+
+def evaluate_scores(dev, scores, fold, grids=None, hybrid=False):
+    """Fold-validated thresholds on forecast events, then metrics. Returns (result dict, predictions)."""
+    forecast = (dev.final_time_to_tca < HORIZON_DAYS).to_numpy()
+    floor = persistence(dev, False) if hybrid else None
+    pick = lambda m: None if floor is None else floor[m]
+    prediction = np.empty(len(dev), object)
+    thresholds = []
+    for k in np.unique(fold):
+        tune = (fold != k) & forecast
+        tc, te = tune_thresholds(dev.final_tier[tune], scores.loc[tune], pick(tune), grids)
+        thresholds.append([tc, te])
+        prediction[fold == k] = decide(scores.loc[fold == k], tc, te, pick(fold == k))
+    final = tune_thresholds(dev.final_tier[forecast], scores.loc[forecast], pick(forecast), grids)
+    result = dict(forecast=tier_metrics(dev.final_tier[forecast], prediction[forecast]),
+                  all=tier_metrics(dev.final_tier, prediction), fold_thresholds=thresholds, thresholds=final)
+    return result, prediction
+
+
 def cross_validate(dev, specs, prefixes, folds=FOLDS):
     """Out-of-fold scores on all development events; headline metrics on forecast events (final message < 2 days).
 
     Each fold's thresholds are tuned on the other folds' out-of-fold forecast events. Hybrid specs reuse
     their base spec's scores with a persistence floor.
     """
-    kfold = StratifiedKFold(n_splits=folds, shuffle=True, random_state=42)
-    fold = np.empty(len(dev), int)
-    for k, (_, idx) in enumerate(kfold.split(dev, dev.final_tier)):
-        fold[idx] = k
+    fold = assign_folds(dev, folds)
     forecast = (dev.final_time_to_tca < HORIZON_DAYS).to_numpy()
-    floor_all = persistence(dev, False)
     results, oof, predictions = {}, {}, {}
     for name, spec in specs.items():
         start = time.time()
         if spec['hybrid']:
             scores = oof[spec['base']]
         else:
-            scores = pd.DataFrame(index=dev.index, columns=['critical', 'elevated'], dtype=float)
-            for k in range(folds):
-                model = fit_spec(spec, dev.loc[fold != k], prefixes)
-                scores.loc[fold == k] = model_scores(model, spec, dev.loc[fold == k]).to_numpy()
-            oof[name] = scores
+            scores = oof[name] = oof_model_scores(spec, dev, fold, prefixes)
         grids = DISTANCE_GRID if spec['kind'] == 'change_regressor' else None
-        floor = floor_all if spec['hybrid'] else None
-        prediction = np.empty(len(dev), object)
-        thresholds = []
-        for k in range(folds):
-            tune = (fold != k) & forecast
-            tc, te = tune_thresholds(dev.final_tier[tune], scores.loc[tune], None if floor is None else floor[tune], grids)
-            thresholds.append([tc, te])
-            prediction[fold == k] = decide(scores.loc[fold == k], tc, te, None if floor is None else floor[fold == k])
-        final = tune_thresholds(dev.final_tier[forecast], scores.loc[forecast],
-                                None if floor is None else floor[forecast], grids)
-        predictions[name] = prediction
-        results[name] = dict(forecast=tier_metrics(dev.final_tier[forecast], prediction[forecast]),
-                             all=tier_metrics(dev.final_tier, prediction), fold_thresholds=thresholds,
-                             thresholds=final)
+        results[name], predictions[name] = evaluate_scores(dev, scores, fold, grids, spec['hybrid'])
         print(f'{name}: {time.time() - start:.0f}s, forecast Critical F2 {results[name]["forecast"]["critical"]["f2"]:.3f}', flush=True)
     for name, use in [('P0_persist_distance', False), ('P1_persist_distance_maxrisk', True)]:
         p = persistence(dev, use)

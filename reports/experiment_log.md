@@ -57,10 +57,31 @@ What the data says about this task:
 
 `outputs/test_event_predictions.csv` holds one row per test event (2,167): 228 Critical, 436 Elevated, 1,503 Safe. The model never lowers a persistence tier; it raises 49 events from Elevated to Critical and 18 from Safe to Elevated. Test events have no outcomes, so these are not scored.
 
-## 6. Open items
+## 6. Ensembles, hyperparameter search and row-level Pc
+
+Motivated by the [literature review](literature_review.md): the Kelvins winner used a recall-promoting threshold cascade, the only top-team ensemble was a majority vote, and the organizers' LightGBM gained about 1.3% F2 over persistence. Full table: [final_tier_ensembles.md](final_tier_ensembles.md). Same folds, persistence floor and fold-validated thresholds; paired bootstrap intervals against the current selection (HR1):
+
+| Candidate | Critical F2 | Missed Critical | ΔF2 vs HR1 [95%] |
+|---|---|---|---|
+| **HR1 distance-change regressor + floor (current)** | **0.839** | 60 | — |
+| E1 mean(forecast-only classifier, calibrated regressor) | 0.836 | 62 | −0.015 to +0.008 |
+| E2 mean of four models | 0.837 | 59 | −0.015 to +0.012 |
+| S1 logistic stack (out-of-fold base scores) | 0.830 | 67 | −0.022 to +0.003 |
+| T1 regressor, nested random search (12 configs) | 0.834 | 63 | −0.013 to +0.004 |
+| T2 classifier, nested random search | 0.835 | 61 | −0.021 to +0.013 |
+| P1 regressor + row-level Pc features | 0.835 | 65 | −0.016 to +0.005 |
+| P2 classifier + row-level Pc features | 0.831 | 60 | −0.025 to +0.007 |
+| Persistence | 0.810 | 96 | — |
+
+- **No idea beat HR1;** every interval against it includes zero. All still beat persistence.
+- **Ensembles and stacking add nothing:** the base models make highly correlated errors (all are trees on the same features), so averaging has little to cancel.
+- **Hyperparameter search finds a flat optimum:** chosen configurations differ across folds, and nested scores are no better than the defaults.
+- **Row-level Pc features do not help:** only 11 usable Critical events are Pc-driven; the rest are miss-distance outcomes, and the row model's information is already in `max_risk_estimate`.
+- **Decision:** keep HR1. The remaining error is about how miss distance evolves in the last two days, which the permitted columns describe only partly (no along-track or cross-track sigmas, no orbital state).
+
+## 7. Open items
 
 - Open the holdout once (`python scripts/train_final_tier.py --finalize`) for an unbiased estimate against persistence.
-- Ensembles, hyperparameter search and row-level Pc as a feature (in progress).
 - Report and literature rewrite: Uriot et al. 2022 (Kelvins challenge), Foster & Estes / Alfano on Pc, NASA CA handbook, CCSDS 508.0 (CDM), ESA standards once editions are confirmed.
 
 ## Reproduce
@@ -70,4 +91,5 @@ python -m pip install -r requirements-model.txt
 python -m unittest discover -s tests
 python -m src.experiment_v2            # row-level experiment v2
 python scripts/train_final_tier.py     # final-tier CV, selection and test event predictions
+python -m src.final_tier_ensembles     # ensembles, nested search, row-level Pc (about 20 minutes)
 ```
