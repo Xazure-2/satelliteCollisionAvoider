@@ -6,6 +6,7 @@ Prepared 31 October 2026. Team: three implementation owners plus you as integrat
 >
 > - **Final-tier model** (scored task): `python scripts/train_final_tier.py` → `outputs/test_event_predictions.csv`, one row per test event. Holdout (evaluated once): Critical recall 0.882 vs 0.789 for persistence. See [reports/model_development.md](reports/model_development.md).
 > - **Per-message Pc** (dashboard): `python scripts/train_row_model.py` then `python scripts/predict.py` → `outputs/test_predictions.csv`.
+> - **Submission:** `submission/submission.csv`, one row per test event with the predicted final tier and its probability (`python scripts/make_submission.py`). **One command for everything:** `./run_all.sh`.
 > - The row-level `test_submission.csv` below is obsolete; section 6 is resolved. Sections 3–5 and 7–9 still guide the risk-rules and dashboard work; the [README](README.md) has the current output columns and integration snippets.
 
 ## 1. What we will ship

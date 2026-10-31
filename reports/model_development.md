@@ -154,9 +154,9 @@ The brief asks for each event's final tier *with a probability*. The frozen mode
 - **The flag and the probability answer different questions:** the recall-tuned flag can mark an event Critical at P(Critical) around 0.2–0.4. On test events, flagged-Critical events have a median P(Critical) of 0.77.
 - **Holdout disclosure:** the probability layer was evaluated once on holdout forecast events, recorded separately in `artifacts/final_tier/probability_holdout.json`; nothing was tuned on it.
 
-## 9. Test predictions for the demo
+## 9. Submission and test predictions
 
-`outputs/test_event_predictions.csv` holds one row per test event (2,167): 228 Critical, 436 Elevated, 1,503 Safe, with P(Safe/Elevated/Critical), the predicted final miss distance, the persistence tier and latest geometry. The model raises 49 events from Elevated to Critical and 18 from Safe to Elevated, and never lowers a tier. Test events have no outcomes, so these are not scored. Test event IDs restart at 0 and are never joined to training IDs.
+The submission is `submission/submission.csv` (`python scripts/make_submission.py`, described in [submission/README.md](../submission/README.md)): one row per test event with the predicted final tier, its probability, P(Safe/Elevated/Critical) and a manoeuvre-planning flag. `outputs/test_event_predictions.csv` holds the same 2,167 events: 228 Critical, 436 Elevated, 1,503 Safe, with P(Safe/Elevated/Critical), the predicted final miss distance, the persistence tier and latest geometry. The model raises 49 events from Elevated to Critical and 18 from Safe to Elevated, and never lowers a tier. Test events have no outcomes, so these are not scored. Test event IDs restart at 0 and are never joined to training IDs.
 
 ### Per-message Pc for the dashboard
 
@@ -181,6 +181,8 @@ The row-level experiment v2 winner (physics features, target floored at −6.001
 
 ## Reproduce
 
+`./run_all.sh` runs everything below in order and then starts the dashboard (see the README quick start). Individually:
+
 ```bash
 python -m pip install -r requirements-model.txt
 python -m unittest discover -s tests
@@ -189,6 +191,8 @@ python scripts/train_final_tier.py             # final-tier CV, selection, test 
 python -m src.final_tier_ensembles             # ensembles, nested search, row-level Pc (about 20 min)
 python scripts/train_row_model.py              # per-message Pc model for the dashboard
 python scripts/predict.py                      # outputs/test_predictions.csv
+python scripts/make_submission.py              # submission/submission.csv
+python scripts/export_dashboard_outputs.py     # dashboard data
 python scripts/train_final_tier.py --finalize  # one-time holdout (already done; reruns reuse the saved result)
 python scripts/train_tier_probability.py       # tier probabilities; --holdout already done (reuses the saved result)
 ```

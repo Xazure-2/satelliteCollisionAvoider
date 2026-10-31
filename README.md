@@ -1,32 +1,80 @@
 # Satellite Collision Avoidance
 
-Hackathon prototype for estimating collision risk from conjunction telemetry. See [ROADMAP.md](ROADMAP.md) for the team assignments and application plan.
+AI collision-risk evaluator for Challenge #1 (Acacia Hackathon 2026, AI & Aerospace track). It reads conjunction telemetry, predicts each event's **final risk tier with a probability** from messages received at least 2 days before closest approach, flags events that need manoeuvre planning, and shows everything in an interactive dashboard.
 
-## Start with the EDA notebook
+**Held-out result** (events whose final message falls inside 2 days, evaluated once): the model catches **88%** of Critical events vs 79% for carrying the current tier forward (9 vs 16 missed), and its tier probabilities are well calibrated (P(Critical) 0.8–1.0 → 91% observed Critical).
 
-Open [notebooks/01_eda.ipynb](notebooks/01_eda.ipynb) in Jupyter or VS Code. Select a Python environment with the dependencies below, then **Restart Kernel → Run All**. Launch from the repository root or its `notebooks/` directory.
+## Quick start: one command
+
+Put the supplied files in `data/`: `train_data.csv`, `test_data.csv` and (optionally) `challenge-1-event-labels.xlsx`. Then, from the repository root:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-eda.txt
+./run_all.sh
 ```
 
-Put the supplied files at `data/train_data.csv` and `data/test_data.csv`. Raw datasets, local environments, caches, and generated artifacts are ignored by Git. The notebook never modifies the raw CSV files.
+It installs everything, trains, predicts and opens the dashboard:
 
-The notebook inventories the full schema, then analyzes the 12 allowed predictors. It covers quality checks, missingness, uncertainty extremes, risk tiers, feature relationships, event histories, test feature shift, and possible encounter overlap. Test `risk` is never loaded. No model is trained.
+1. **Installs dependencies** into `.venv` (Python 3.11+; needs about 1.5 GB of free disk).
+2. **Runs the test suite.**
+3. **Builds the frozen event split** by executing the EDA notebook headlessly.
+4. **Trains the final-tier model** (5-fold cross-validation, selection, one-time holdout evaluation).
+5. **Calibrates the tier probabilities.**
+6. **Trains the per-message Pc model** and scores every test message.
+7. **Writes the submission file** and the dashboard data.
+8. **Starts the dashboard** on http://localhost:3000. In the top bar, choose **Real model outputs (outputs/)** and press reload.
 
-Before detailed EDA, it reserves a reproducible 70/15/15 event split. Label relationships and example histories use only the 70% training partition. Previous repository inspection exposed aggregate full-training counts/ranges; that prior inspection is disclosed in the notebook.
+A full run takes about 10 minutes on a laptop, plus 1–2 minutes for the dashboard's first build. Options:
 
-Generated files:
+| Command | Effect |
+|---|---|
+| `./run_all.sh --no-dashboard` | Generate all outputs, then stop |
+| `./run_all.sh --skip-install` | Reuse the existing `.venv` |
+| `./run_all.sh --research` | Also rerun the research experiments (row-level v2, ensembles; about 25 extra minutes) |
+| `VENV=/path/to/env ./run_all.sh` | Use a different virtual environment |
 
-- `artifacts/event_splits.csv`: eligible event IDs and their frozen partitions; reuse for modeling.
-- `artifacts/eda_manifest.json`: file fingerprints, split settings, units, and environment versions.
-- `reports/eda_summary.md`: computed findings and proposed modeling decisions.
+Reruns reuse saved holdout results; they never re-evaluate a different model on the same holdout.
 
-Reruns verify the saved split and reuse it. If the inputs or split settings change, the notebook stops instead of silently replacing the split. Preserve and archive the old split and manifest before intentionally starting a new experiment. Do not delete them merely to get past a failed integrity check.
+### What you get
 
-The notebook usually takes about 1–3 minutes on a laptop, with some extra time possible for first-run plotting caches. Charts contain a deterministic sample where needed; summary statistics use all eligible analysis rows. Inspect the final check cell and summary before proceeding to modeling.
+| Output | Contents |
+|---|---|
+| `submission/submission.csv` | **The submission:** one row per test event, predicted final tier, its probability, P(Safe/Elevated/Critical), manoeuvre-planning flag. See [submission/README.md](submission/README.md) |
+| `outputs/test_event_predictions.csv` | Event predictions with probabilities, forecast final miss distance and current (persistence) tier |
+| `outputs/test_predictions.csv` | Per-message estimated Pc and tiers |
+| `outputs/event_predictions.csv`, `outputs/cdm_history.csv` | Dashboard data: test events plus held-out training events with actual outcomes |
+| `outputs/dashboard/` | Risk-rule tables, action queues and insight text |
+| `reports/` | [model_development.md](reports/model_development.md) (the full story), [final_tier_report.md](reports/final_tier_report.md), [tier_probability_report.md](reports/tier_probability_report.md), [literature_review.md](reports/literature_review.md) |
+
+## How it works
+
+```
+train_data.csv ──► EDA notebook ──► frozen 70/15/15 event split (seed 42)
+                                         │
+       ┌─────────────────────────────────┴───────────────────────────┐
+       ▼                                                             ▼
+ Final-tier model (scored task)                          Per-message Pc model (context)
+ • one row per event, messages >= 2 days out             • physics features, target floored at −6.001,
+ • forecasts the change in miss distance to the            capped at max_risk_estimate
+   final message; current distance tier is a floor       • estimated Pc for every message
+ • calibrated P(Safe / Elevated / Critical)
+       │                                                             │
+       └──────────────► risk rules (src/risk.py, src/events.py) ◄────┘
+                        tiers, reasons, actions, time-to-TCA windows,
+                        action queue, insights
+                                         │
+             ┌───────────────────────────┴──────────────────────────┐
+             ▼                                                      ▼
+   submission/submission.csv                         Reflex dashboard (dashboard/)
+```
+
+- **Task:** predict each event's final tier from messages >= 2 days before closest approach, as the organizers clarified. Tiers follow the brief: Critical if Pc ≥ 1e-4 or miss distance < 1,000 m; Elevated if not Critical and (Pc ≥ 1e-6 or miss distance ≤ 5,000 m); otherwise Safe.
+- **Why forecast distance:** 831 of 834 Critical training events are Critical because of miss distance, not Pc.
+- **Decision rule:** Critical when the forecast final distance is ≤ 1.31 km, Elevated when ≤ 5.16 km. These thresholds are tuned for recall (F2), because missing a dangerous event costs more than a false alarm. The latest message's distance tier acts as a floor.
+- **Probabilities:** a multinomial logistic calibrator on the model's forecast and latest-message terms. The flag and the probability answer different questions: an event can be flagged Critical with P(Critical) below 0.5.
+- **Validation:** 5-fold event-grouped cross-validation for every choice, then one holdout evaluation. Every result is compared with the persistence baseline (the current tier carried forward), which was hard to beat in the ESA Kelvins challenge too.
+- **Inputs:** only the permitted telemetry columns. Test `risk` is never read.
+
+[reports/model_development.md](reports/model_development.md) tells the full iteration story, with every experiment and result.
 
 ## Interpretation
 
@@ -44,12 +92,19 @@ Every test message is 2–7 days before closest approach, so a real next-24-hour
 
 Start with [reports/model_development.md](reports/model_development.md): it tells the full iteration story and gives the headline holdout result (Critical recall 0.882 vs 0.789 for persistence on held-out forecast events).
 
+Step by step (what `./run_all.sh` runs):
+
 ```bash
-python -m pip install -r requirements-model.txt
+python -m pip install -r requirements-model.txt -r dashboard/requirements.txt
 python -m unittest discover -s tests
-python scripts/train_final_tier.py     # final-tier CV + selection; reuses the saved holdout result
-python scripts/train_row_model.py      # refit the per-message Pc model on train+validation events
-python scripts/predict.py              # per-message test predictions for the dashboard
+python scripts/run_eda.py                        # frozen event split (executes the EDA notebook)
+python scripts/train_final_tier.py --finalize    # final-tier CV + selection; holdout once, then reused
+python scripts/train_tier_probability.py --holdout   # tier probabilities; holdout once, then reused
+python scripts/train_row_model.py                # per-message Pc model on train+validation events
+python scripts/predict.py                        # per-message test predictions
+python scripts/make_submission.py                # submission/submission.csv
+python scripts/build_dashboard_data.py           # risk-rule tables and insights
+python scripts/export_dashboard_outputs.py       # dashboard data (v2 contract)
 ```
 
 Put `challenge-1-event-labels.xlsx` in `data/`; final-tier labels are recomputed from `train_data.csv` and checked against it. Holdout ledgers (`artifacts/holdout_evaluation.json` for M3, `artifacts/final_tier/holdout_ledger.json` for the final-tier model) block re-evaluating a different model on the same holdout. Do not delete them to reuse the holdout as validation; arrange a new protocol instead.
@@ -90,10 +145,10 @@ python scripts/export_dashboard_outputs.py
 
 # 2. Start the dashboard (first run installs JavaScript dependencies, 1-2 minutes)
 cd dashboard
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-reflex run --env prod --single-port
+reflex run --env prod --single-port     # with the repository .venv active (./run_all.sh creates it)
 ```
+
+`./run_all.sh` does all of this in one go.
 
 Open http://localhost:3000, choose **Real model outputs (outputs/)** in the top-bar data selector and press reload. If you retrain a model, rerun step 1 and reload.
 
@@ -126,6 +181,32 @@ python scripts/build_dashboard_data.py --cutoff-days 2 --out outputs/dashboard_c
 - **`test`**: all test events. The 24-hour window is honestly empty (every test message is 2+ days out); the queue is driven by the final-tier forecasts.
 - **`train_replay`**: holdout events only, so both models are out of sample, with observed outcomes in separate `observed_*` columns for comparison. At cutoff 0 the window shows events whose latest message is within a day of closest approach; at cutoff 2 it shows the forecasts as they stood 2 days out.
 - List columns (`reasons`, `alert_reasons`, `quality_flags`) are JSON strings in the CSVs.
+
+## EDA notebook
+
+Open [notebooks/01_eda.ipynb](notebooks/01_eda.ipynb) in Jupyter or VS Code. Select a Python environment with the dependencies below, then **Restart Kernel → Run All**. Launch from the repository root or its `notebooks/` directory.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-eda.txt
+```
+
+Put the supplied files at `data/train_data.csv` and `data/test_data.csv`. Raw datasets, local environments, caches, and generated artifacts are ignored by Git. The notebook never modifies the raw CSV files.
+
+The notebook inventories the full schema, then analyzes the 12 allowed predictors. It covers quality checks, missingness, uncertainty extremes, risk tiers, feature relationships, event histories, test feature shift, and possible encounter overlap. Test `risk` is never loaded. No model is trained.
+
+Before detailed EDA, it reserves a reproducible 70/15/15 event split. Label relationships and example histories use only the 70% training partition. Previous repository inspection exposed aggregate full-training counts/ranges; that prior inspection is disclosed in the notebook.
+
+Generated files:
+
+- `artifacts/event_splits.csv`: eligible event IDs and their frozen partitions; reuse for modeling.
+- `artifacts/eda_manifest.json`: file fingerprints, split settings, units, and environment versions.
+- `reports/eda_summary.md`: computed findings and proposed modeling decisions.
+
+Reruns verify the saved split and reuse it. If the inputs or split settings change, the notebook stops instead of silently replacing the split. Preserve and archive the old split and manifest before intentionally starting a new experiment. Do not delete them merely to get past a failed integrity check.
+
+The notebook usually takes about 1–3 minutes on a laptop, with some extra time possible for first-run plotting caches. Charts contain a deterministic sample where needed; summary statistics use all eligible analysis rows. Inspect the final check cell and summary before proceeding to modeling.
 
 ## Notebooks
 
