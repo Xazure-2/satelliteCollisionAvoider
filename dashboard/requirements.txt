@@ -1,0 +1,5 @@
+# Orbital Intelligence dashboard (Reflex). Python 3.11+; tested with 3.13.
+reflex==0.10.1
+pandas>=2.2,<4
+numpy>=2.0,<3
+plotly>=5.24,<8
