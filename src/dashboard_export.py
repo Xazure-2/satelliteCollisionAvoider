@@ -8,8 +8,8 @@ Two tables, written to outputs/:
 
 Mapping decisions:
 - predicted_final_tier and predicted_final_miss_distance_m come from the final-tier model (basis
-  "predicted"). It forecasts tier and miss distance, not final Pc, so predicted_final_log10_pc and
-  tier probabilities are left empty rather than invented.
+  "predicted"); p_safe/p_elevated/p_critical come from the calibrated probability layer
+  (src/tier_probability.py). The model does not forecast final Pc, so predicted_final_log10_pc is empty.
 - observed_tier is the tier implied by the observed miss distance at the cutoff CDM, the floor the
   model can only raise. Test `risk` is never read, so observed Pc is empty for test events.
 - Held-out training events (source "train", split "holdout") are out of sample for both models and
@@ -46,11 +46,12 @@ def reasons_for(cutoff_m, forecast_m, observed, predicted, pc_text, cuts_m):
     return r
 
 
-def export_tables(messages, row_bundle, tier_bundle, source, split, observed_risk=None, labels=None):
+def export_tables(messages, row_bundle, tier_bundle, source, split, observed_risk=None, labels=None, prob_bundle=None):
     """Build (events, history) for one source. `messages` holds event_id, row_id and permitted telemetry only.
 
     observed_risk: optional Series of log10(Pc) aligned to messages (held-out training only).
     labels: optional final_labels() frame indexed by event_id (held-out training only).
+    prob_bundle: optional tier-probability calibrator (src/tier_probability.py) for p_safe/p_elevated/p_critical.
     """
     if 'risk' in messages:
         raise ValueError('Pass permitted telemetry only; observed risk goes in observed_risk for held-out data.')
@@ -93,6 +94,12 @@ def export_tables(messages, row_bundle, tier_bundle, source, split, observed_ris
     for col in ['p_safe', 'p_elevated', 'p_critical']:
         if col in forecasts:
             events[col] = forecasts[col].reindex(cut.index).to_numpy()
+    if prob_bundle is not None:
+        from src.final_tier import event_features
+        from src.tier_probability import predict_probabilities
+        proba = predict_probabilities(event_features(messages), tier_bundle, prob_bundle).reindex(cut.index)
+        events['p_safe'], events['p_elevated'], events['p_critical'] = (
+            proba.Safe.to_numpy(), proba.Elevated.to_numpy(), proba.Critical.to_numpy())
     if observed_risk is not None:
         by_row = pd.Series(observed_risk.to_numpy(), index=messages.row_id.to_numpy())
         events['observed_log10_pc'] = by_row.reindex(cut.row_id).to_numpy()

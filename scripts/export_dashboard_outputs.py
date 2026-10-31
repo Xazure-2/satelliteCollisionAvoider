@@ -16,6 +16,7 @@ from src.model import FEATURES
 from src.row_model import load_row_model
 from src.final_tier import final_labels
 from src.dashboard_export import export_tables
+from src.tier_probability import load_probability_model
 
 if __name__ == '__main__':
     parser=argparse.ArgumentParser(description=__doc__)
@@ -24,18 +25,19 @@ if __name__ == '__main__':
     args=parser.parse_args()
     row_bundle=load_row_model()
     tier_bundle=joblib.load(ROOT/'artifacts/final_tier/final_tier_model.joblib')  # trusted local artifact
+    prob_bundle=load_probability_model()
     parts=[]
     with threadpool_limits(limits=4):
         test=pd.read_csv(ROOT/'data/test_data.csv',usecols=['event_id',*FEATURES])
         test['row_id']=range(len(test))
-        parts.append(export_tables(test,row_bundle,tier_bundle,source='test',split='test'))
+        parts.append(export_tables(test,row_bundle,tier_bundle,source='test',split='test',prob_bundle=prob_bundle))
         if not args.no_holdout:
             train=pd.read_csv(ROOT/'data/train_data.csv',usecols=['event_id',*FEATURES,'risk'])
             train['row_id']=range(len(train))
             splits=pd.read_csv(ROOT/'artifacts/event_splits.csv')
             holdout=train.loc[train.event_id.isin(splits.loc[splits.partition.eq('holdout'),'event_id'])]
             parts.append(export_tables(holdout.drop(columns='risk'),row_bundle,tier_bundle,source='train',split='holdout',
-                                       observed_risk=holdout.risk,labels=final_labels(holdout)))
+                                       observed_risk=holdout.risk,labels=final_labels(holdout),prob_bundle=prob_bundle))
     events=pd.concat([e for e,_ in parts],ignore_index=True)
     history=pd.concat([h for _,h in parts],ignore_index=True)
     args.out.mkdir(parents=True,exist_ok=True)
