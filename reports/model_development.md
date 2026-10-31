@@ -141,6 +141,12 @@ Across all 1,800 holdout events (including those where persistence is exact): Cr
 
 `outputs/test_event_predictions.csv` holds one row per test event (2,167): 228 Critical, 436 Elevated, 1,503 Safe, with the predicted final miss distance, the persistence tier and latest geometry. The model raises 49 events from Elevated to Critical and 18 from Safe to Elevated, and never lowers a tier. Test events have no outcomes, so these are not scored. Test event IDs restart at 0 and are never joined to training IDs.
 
+### Per-message Pc for the dashboard
+
+The row-level experiment v2 winner (physics features, target floored at −6.001, capped at `max_risk_estimate`) is refit on train+validation events (137,554 messages) by `python scripts/train_row_model.py` and saved as `artifacts/row_pc_model.joblib` (`row-pc-v2-F6`). `python scripts/predict.py` writes `outputs/test_predictions.csv`, one row per test message, with a `pc_display` column that shows floored estimates as `< 1e-6`. It replaces the M3 outputs; the obsolete row-level `test_submission.csv` was removed.
+
+**Caveat found during the refresh:** because the target is floored right at the Elevated boundary, per-message "Elevated by Pc" calls lean heavily toward recall. In CV the model catches 98% of messages that are truly Elevated-or-worse by Pc, but only 29% of its flags are correct (it flags 28% of messages vs a true share of 8%). The floor −8 variant is more precise (84%) but catches only 57%. F6 stays selected under the project's recall-first F2 rule (F2 at −6: 0.66 vs 0.61; at −4: 0.748 vs 0.718). Use the final-tier model to prioritize events, and per-message Pc for context.
+
 ## 10. What we learned
 
 1. **Beat the right baseline.** Persistence is strong, as in the Kelvins challenge; dummy baselines hide that.
@@ -164,5 +170,7 @@ python -m unittest discover -s tests
 python -m src.experiment_v2                    # row-level experiment v2
 python scripts/train_final_tier.py             # final-tier CV, selection, test predictions
 python -m src.final_tier_ensembles             # ensembles, nested search, row-level Pc (about 20 min)
+python scripts/train_row_model.py              # per-message Pc model for the dashboard
+python scripts/predict.py                      # outputs/test_predictions.csv
 python scripts/train_final_tier.py --finalize  # one-time holdout (already done; reruns reuse the saved result)
 ```

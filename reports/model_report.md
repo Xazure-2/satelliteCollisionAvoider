@@ -1,5 +1,7 @@
 # Row-level collision-risk model report
 
+> **Superseded (historical record).** This report documents the first modelling pass (M3, row-level regression), kept for the audit trail. Later reviews found that a one-line `max_risk_estimate` rule beat M3, that the −30 placeholder distorted training, and that the "extreme" sigmas are placeholders (corrected below). The organizers then clarified that the scored task is each event's final tier. See [model_development.md](model_development.md) for the current models and results.
+
 ## Result and decision
 
 Selected **M3**, model version `87c8704204c5-M3`, using validation only. M3 inherited preprocessing from **M2**. The selected model beats the mean-target dummy's validation RMSE. No held-out data were used to fit preprocessing or the estimator.
@@ -27,7 +29,7 @@ The 1% tolerance is our practical balanced-selection default, not an organizer-s
 
 B0 = median dummy; B1 = mean dummy; M1 = median-imputed HGB; M2 = native-NaN HGB; M3 = selected preprocessing plus geometry features; A0 = selected architecture without `max_risk_estimate`.
 
-All learned models use the same two extreme-sigma flags and numeric missingness indicators. Categories are one-hot encoded from training only; unknown categories are accepted. Derived features are absolute radial position, independent-error combined radial sigma, and their ratio (missing for invalid/zero denominator), calculated before imputation. Extreme sigmas remain measurements, not automatically discarded sentinels.
+All learned models use the same two extreme-sigma flags and numeric missingness indicators. Categories are one-hot encoded from training only; unknown categories are accepted. Derived features are absolute radial position, independent-error combined radial sigma, and their ratio (missing for invalid/zero denominator), calculated before imputation. ~~Extreme sigmas remain measurements, not automatically discarded sentinels.~~ **Correction:** the extreme values (63,781,363 m and 63,781,361 m) are 10 × Earth's equatorial radius, a "no covariance" placeholder, not measurements. Later models set them to missing with a flag.
 
 Parameters: `{"early_stopping": false, "l2_regularization": 1.0, "learning_rate": 0.05, "loss": "squared_error", "max_iter": 300, "max_leaf_nodes": 31, "min_samples_leaf": 20, "random_state": 42}`.
 

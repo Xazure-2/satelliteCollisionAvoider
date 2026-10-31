@@ -30,52 +30,55 @@ The notebook usually takes about 1–3 minutes on a laptop, with some extra time
 
 ## Interpretation
 
-`risk = log10(Pc)`. A row with `risk >= -4` meets the challenge's critical Pc threshold. The application policy also marks distance below 1 km as critical. These two triggers are analyzed separately.
+`risk = log10(Pc)`; `risk = -30` is a placeholder for a probability too small to compute (Pc ≈ 0). Tiers follow the hackathon brief: Critical if risk >= −4 or miss distance < 1,000 m; Elevated if not Critical and (risk >= −6 or miss distance <= 5,000 m); otherwise Safe.
 
-The supplied test messages are more than two days before closest approach; their next-24-hour view is therefore empty. Relative positions describe updated encounter geometry at TCA, not complete satellite trajectories. The project follows the hackathon's thresholds and does not claim operational certification.
+Every test message is 2–7 days before closest approach, so a real next-24-hour view of the test data is empty; use `time_to_tca` windows on a training replay to demonstrate warnings. Relative positions describe encounter geometry at TCA, not satellite trajectories. Test event IDs restart at 0 and are never joined to training IDs. The project follows the brief's thresholds and does not claim operational certification.
 
-## Final-tier task (organizer clarification)
+## Models at a glance
 
-The scored task is each event's **final tier** (from its last message before closest approach), predicted only from messages with `time_to_tca >= 2` days. Put `challenge-1-event-labels.xlsx` in `data/`; labels are recomputed from `train_data.csv` and checked against it.
+| Purpose | Model | Train | Output | Report |
+|---|---|---|---|---|
+| **Scored task:** each event's final tier from messages >= 2 days out | Distance-change regressor + persistence floor | `python scripts/train_final_tier.py` | `outputs/test_event_predictions.csv` (one row per test event) | [model_development.md](reports/model_development.md), [final_tier_report.md](reports/final_tier_report.md) |
+| **Dashboard:** estimated Pc per message | Row-level v2: physics features, target floored at −6.001, capped at `max_risk_estimate` | `python scripts/train_row_model.py` then `python scripts/predict.py` | `outputs/test_predictions.csv` (one row per test message) | [experiment_v2.md](reports/experiment_v2.md) |
+| Historical first pass | M3 row-level regressor (superseded) | `python scripts/train.py` (blocked: holdout already opened) | `artifacts/selected_model.joblib` | [model_report.md](reports/model_report.md) |
 
-```bash
-python scripts/train_final_tier.py             # grouped CV, selection, test event predictions
-python scripts/train_final_tier.py --finalize  # evaluate the holdout once (ledger-guarded)
-```
-
-Read [reports/model_development.md](reports/model_development.md) for the full iteration story and headline holdout result, and [reports/final_tier_report.md](reports/final_tier_report.md) for the generated tables. Outputs: `outputs/test_event_predictions.csv` (one row per test event, tier probabilities, decision, persistence tier). The row-level models below remain for per-message estimated Pc in the dashboard.
-
-## Modeling experiment
-
-Open [notebooks/02_modeling.ipynb](notebooks/02_modeling.ipynb) for the experiment, comparison plots, and selected-model diagnostics. The implementation fits two dummy baselines, median-imputed HGB, native-missing-value HGB, and a derived-feature variant, followed by an ablation without `max_risk_estimate`. It reuses the EDA event split and selects on validation only.
+Start with [reports/model_development.md](reports/model_development.md): it tells the full iteration story and gives the headline holdout result (Critical recall 0.882 vs 0.789 for persistence on held-out forecast events).
 
 ```bash
 python -m pip install -r requirements-model.txt
-python -m unittest discover -s tests -v
-python scripts/train.py
-python scripts/train.py --finalize
-python scripts/predict.py
+python -m unittest discover -s tests
+python scripts/train_final_tier.py     # final-tier CV + selection; reuses the saved holdout result
+python scripts/train_row_model.py      # refit the per-message Pc model on train+validation events
+python scripts/predict.py              # per-message test predictions for the dashboard
 ```
 
-The first train command fits or reuses cached validation experiments. `--finalize` freezes the selection, checks inference compatibility, evaluates the holdout once, and exports all test rows. The notebook defaults to validation only; set its `FINALIZE` option deliberately when starting a new experiment. After finalization, reruns reuse the saved holdout metrics and do not predict the holdout again.
+Put `challenge-1-event-labels.xlsx` in `data/`; final-tier labels are recomputed from `train_data.csv` and checked against it. Holdout ledgers (`artifacts/holdout_evaluation.json` for M3, `artifacts/final_tier/holdout_ledger.json` for the final-tier model) block re-evaluating a different model on the same holdout. Do not delete them to reuse the holdout as validation; arrange a new protocol instead.
 
-Read [reports/model_report.md](reports/model_report.md) for measured results, counts, slices, event-bootstrap intervals, and limitations. The selected preprocessing and estimator are stored together in `artifacts/selected_model.joblib`; only load trusted joblib files. Its metadata records the model version, units, feature order, training event IDs, and environment versions.
+### Final-tier output (`outputs/test_event_predictions.csv`)
 
-The holdout ledger protects the evaluated model: changing implementation, inputs, or experiment settings after finalization blocks a new automatic run. Preserve the evaluated experiment and arrange a new evaluation protocol before retuning. Do not delete the ledger to reuse the same holdout as validation.
-
-Test exports:
-
-- `outputs/test_predictions.csv`: raw and clipped log risk, estimated Pc, risk tiers, original row/event identifiers, quality flags, and model version.
-- `outputs/test_submission.csv`: `row_id,event_id,predicted_risk`, with raw log10(Pc). Confirm the organizer's required column names before submitting.
-- `tests/fixtures/telemetry.csv` and `expected_predictions.csv`: small reproducible, label-free inference handoff.
-
-For app integration:
+`source`, `event_id`, `predicted_tier`, `predicted_final_miss_distance_m`, `persistence_tier` (tier of the latest message), `latest_time_to_tca_days`, `latest_miss_distance_m`, `message_count`, `model_version`. The predictor only accepts messages at least 2 days before closest approach: **filter replayed training messages to `time_to_tca >= 2` before calling `predict_events`**, or it rejects the batch.
 
 ```python
-from src.model import load_bundle, predict_log10_pc
-
-model = load_bundle()
-raw_log_risk = predict_log10_pc(telemetry_frame, model)
+from src.final_tier import predict_events
+import joblib
+bundle = joblib.load('artifacts/final_tier/final_tier_model.joblib')  # trusted local file only
+events = predict_events(messages.loc[messages.time_to_tca >= 2], bundle)
 ```
 
-Calling `predict_log10_pc(frame)` alone loads the selected artifact automatically. Both forms preserve row order, ignore labels and extra columns, and accept unseen categories and missing optional inputs. `predict_log10_pc` raises a clear error on invalid required telemetry. `prediction_frame` (exports and dashboard) instead scores row by row: invalid rows get no estimate, a `needs_review` tier (or `critical` when a valid miss distance is below 1 km), and quality flags, so one bad message never blocks the batch or defaults to safe. Placeholder sigmas (10 Earth radii, 63,781,361–63,781,363 m) are flagged `*_placeholder`. This model estimates supplied risk labels; its Pc output is not a calibrated probability of observed collisions.
+### Per-message Pc output (`outputs/test_predictions.csv`)
+
+Raw and clipped log10(Pc), `predicted_pc`, `pc_display` (`< 1e-6` at the floor), Pc-only and combined tiers, miss distance, hours to TCA, object type, quality flags and model version, one row per input message in original order.
+
+```python
+from src.row_model import load_row_model
+from src.model import prediction_frame
+table = prediction_frame(telemetry_frame, load_row_model())   # needs event_id; row_id optional
+```
+
+`prediction_frame` scores row by row: invalid required telemetry gets no estimate and a `needs_review` tier (or `critical` when a valid miss distance is below 1 km), so one bad message never blocks the batch or defaults to safe. Placeholder sigmas (10 Earth radii, 63,781,361–63,781,363 m) are flagged `*_placeholder`. `predict_log10_pc(frame, model)` is the strict variant and raises on invalid input; called without a model it still loads the historical M3 artifact.
+
+**Caveat:** the row model is tuned for recall, as the brief's F2 metric favours. In cross-validation it catches 98% of messages that are truly Elevated-or-worse by Pc, but only about 29% of its Elevated-by-Pc flags are correct. Use the final-tier model to prioritize events, and per-message Pc for context. Neither output is a calibrated probability of an observed collision.
+
+## Notebooks
+
+`notebooks/02_modeling.ipynb` documents the historical M3 experiment (dummy baselines, median-imputed and native-missing HGB, derived features, ablation without `max_risk_estimate`). Its findings are superseded by the reports above; keep it for the audit trail.
