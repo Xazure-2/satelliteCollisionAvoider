@@ -137,9 +137,26 @@ Across all 1,800 holdout events (including those where persistence is exact): Cr
 
 **Disclosure:** the holdout events were never used for EDA, feature design or selection in this task. Their row-level labels were scored once for the earlier M3 model; that result did not inform any later decision.
 
+## 8b. Tier probabilities (submission requirement)
+
+The brief asks for each event's final tier *with a probability*. The frozen model decides tiers with a recall-tuned rule and has no probability output, so we added a calibration layer without changing any decision or the tier model's holdout ledger (`src/tier_probability.py`, [tier_probability_report.md](tier_probability_report.md)).
+
+- **Method:** a multinomial logistic regression maps the frozen model's out-of-fold forecast final miss distance, the current distance tier, the latest distance, `max_risk_estimate` and time to TCA to P(Safe), P(Elevated) and P(Critical). It is fitted on development forecast events (final message inside 2 days) and cross-fitted on the same 5 folds for evaluation.
+- **Results** (lower is better):
+
+| Probabilities | CV log loss | CV Brier | Holdout log loss | Holdout Brier |
+|---|---|---|---|---|
+| **Calibrated model** | **0.227** | **0.114** | **0.212** | **0.107** |
+| P(final tier given current distance tier) | 0.258 | 0.124 | 0.241 | 0.114 |
+| Class frequencies only | 0.720 | 0.409 | — | — |
+
+- **The probabilities are well calibrated:** events with cross-validated P(Critical) of 0.6–0.8 ended Critical 75% of the time; 0.8–1.0 ended Critical 90%.
+- **The flag and the probability answer different questions:** the recall-tuned flag can mark an event Critical at P(Critical) around 0.2–0.4. On test events, flagged-Critical events have a median P(Critical) of 0.77.
+- **Holdout disclosure:** the probability layer was evaluated once on holdout forecast events, recorded separately in `artifacts/final_tier/probability_holdout.json`; nothing was tuned on it.
+
 ## 9. Test predictions for the demo
 
-`outputs/test_event_predictions.csv` holds one row per test event (2,167): 228 Critical, 436 Elevated, 1,503 Safe, with the predicted final miss distance, the persistence tier and latest geometry. The model raises 49 events from Elevated to Critical and 18 from Safe to Elevated, and never lowers a tier. Test events have no outcomes, so these are not scored. Test event IDs restart at 0 and are never joined to training IDs.
+`outputs/test_event_predictions.csv` holds one row per test event (2,167): 228 Critical, 436 Elevated, 1,503 Safe, with P(Safe/Elevated/Critical), the predicted final miss distance, the persistence tier and latest geometry. The model raises 49 events from Elevated to Critical and 18 from Safe to Elevated, and never lowers a tier. Test events have no outcomes, so these are not scored. Test event IDs restart at 0 and are never joined to training IDs.
 
 ### Per-message Pc for the dashboard
 
@@ -173,4 +190,5 @@ python -m src.final_tier_ensembles             # ensembles, nested search, row-l
 python scripts/train_row_model.py              # per-message Pc model for the dashboard
 python scripts/predict.py                      # outputs/test_predictions.csv
 python scripts/train_final_tier.py --finalize  # one-time holdout (already done; reruns reuse the saved result)
+python scripts/train_tier_probability.py       # tier probabilities; --holdout already done (reuses the saved result)
 ```

@@ -3,7 +3,7 @@
 AI-powered satellite collision early-warning interface for Airbus Challenge #1 (Teammate 3).
 The original Streamlit dashboard (`../app.py`, `../ui/`) is untouched and remains the fallback.
 
-> **Status:** real model outputs are available. Run `python scripts/export_dashboard_outputs.py` from the
+> **Status:** real model outputs are available, including tier probabilities. Run `python scripts/export_dashboard_outputs.py` from the
 > repository root to write `outputs/event_predictions.csv` and `outputs/cdm_history.csv` in the v2 contract, then
 > choose **Real model outputs** in the top bar. Synthetic datasets remain available and clearly labelled.
 

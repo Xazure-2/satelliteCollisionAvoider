@@ -38,7 +38,7 @@ Every test message is 2–7 days before closest approach, so a real next-24-hour
 
 | Purpose | Model | Train | Output | Report |
 |---|---|---|---|---|
-| **Scored task:** each event's final tier from messages >= 2 days out | Distance-change regressor + persistence floor | `python scripts/train_final_tier.py` | `outputs/test_event_predictions.csv` (one row per test event) | [model_development.md](reports/model_development.md), [final_tier_report.md](reports/final_tier_report.md) |
+| **Scored task:** each event's final tier, with a probability, from messages >= 2 days out | Distance-change regressor + persistence floor; calibrated P(Safe/Elevated/Critical) | `python scripts/train_final_tier.py` then `python scripts/train_tier_probability.py` | `outputs/test_event_predictions.csv` (one row per test event) | [model_development.md](reports/model_development.md), [final_tier_report.md](reports/final_tier_report.md) |
 | **Dashboard:** estimated Pc per message | Row-level v2: physics features, target floored at −6.001, capped at `max_risk_estimate` | `python scripts/train_row_model.py` then `python scripts/predict.py` | `outputs/test_predictions.csv` (one row per test message) | [experiment_v2.md](reports/experiment_v2.md) |
 | Historical first pass | M3 row-level regressor (superseded) | `python scripts/train.py` (blocked: holdout already opened) | `artifacts/selected_model.joblib` | [model_report.md](reports/model_report.md) |
 
@@ -56,7 +56,7 @@ Put `challenge-1-event-labels.xlsx` in `data/`; final-tier labels are recomputed
 
 ### Final-tier output (`outputs/test_event_predictions.csv`)
 
-`source`, `event_id`, `predicted_tier`, `predicted_final_miss_distance_m`, `persistence_tier` (tier of the latest message), `latest_time_to_tca_days`, `latest_miss_distance_m`, `message_count`, `model_version`. The predictor only accepts messages at least 2 days before closest approach: **filter replayed training messages to `time_to_tca >= 2` before calling `predict_events`**, or it rejects the batch.
+`source`, `event_id`, `predicted_tier`, `predicted_final_miss_distance_m`, `persistence_tier` (tier of the latest message), `latest_time_to_tca_days`, `latest_miss_distance_m`, `message_count`, `model_version`, and the calibrated probabilities `p_safe`, `p_elevated`, `p_critical` plus `p_predicted_tier`. Run `python scripts/train_tier_probability.py` after `train_final_tier.py` to add them; see [tier_probability_report.md](reports/tier_probability_report.md). The predictor only accepts messages at least 2 days before closest approach: **filter replayed training messages to `time_to_tca >= 2` before calling `predict_events`**, or it rejects the batch.
 
 ```python
 from src.final_tier import predict_events
@@ -85,6 +85,7 @@ The Reflex dashboard in `dashboard/` reads `outputs/event_predictions.csv` and `
 
 ```bash
 # 1. From the repository root: export predictions (about 5 s; checked with the dashboard's own loader)
+python scripts/train_tier_probability.py   # only needed once, or after retraining (fits tier probabilities)
 python scripts/export_dashboard_outputs.py
 
 # 2. Start the dashboard (first run installs JavaScript dependencies, 1-2 minutes)
@@ -100,7 +101,8 @@ What the export contains:
 
 - **Test events** (`source=test`, 2,167): the final-tier prediction and forecast final miss distance at the cutoff CDM (latest message >= 2 days out), the observed-distance tier at that CDM, reasons, quality flags and full CDM history. Test `risk` is never read, so observed Pc is empty.
 - **Held-out training events** (`source=train`, `split=holdout`, 1,800): the same predictions, out of sample for both models, plus observed risk history and actual final outcomes. These drive the Model Validation page, which reproduces the holdout result (108 of 118 Critical events caught, 41 false alarms).
-- **Not supplied:** predicted final Pc and tier probabilities. The final-tier model forecasts tier and miss distance, not Pc, so the dashboard shows those fields as "not provided" (two expected loader warnings).
+- **Tier probabilities:** `p_safe`, `p_elevated`, `p_critical` from the calibrated probability layer, which drive the dashboard's reliability panel.
+- **Not supplied:** predicted final Pc. The final-tier model forecasts tier and miss distance, not Pc, so that field shows "not provided" (one expected loader warning).
 - **Alert thresholds:** the model flags Critical when the forecast final distance is <= 1.31 km (tuned for recall), and the latest message's distance tier is a floor. The encounter page's threshold check may report that a Critical tier is "not reproduced" from the 1 km rule; each event's reasons state the tuned thresholds and the floor.
 
 ## Risk rules and dashboard data
