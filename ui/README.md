@@ -1,4 +1,6 @@
-# Dashboard (`app.py` + `ui/`)
+# Dashboard (`app.py` + `ui/`) — Streamlit fallback
+
+> **Fallback.** The main dashboard is the Reflex app in `dashboard/`, fed by `python scripts/export_dashboard_outputs.py` (or `./run_all.sh`). This app predates the final models: its live pipeline uses the default `predict_log10_pc` artifact (the superseded M3 model), and its training replay expects a `select_replay()` that `src/events.py` does not provide. Demo script: [DEMO_SCRIPT.md](DEMO_SCRIPT.md).
 
 Owner: Teammate 3. Run from the repository root:
 

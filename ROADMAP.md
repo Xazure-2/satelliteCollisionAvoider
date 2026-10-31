@@ -2,6 +2,13 @@
 
 Prepared 31 October 2026. Team: three implementation owners plus you as integration/demo lead. Schedule below assumes a 12-hour build; compress the timeboxes if needed without changing the integration order.
 
+> **Status update (modelling complete).** The organizers clarified the task: predict each event's **final tier** from messages with `time_to_tca >= 2` days, and report metrics on an event-level held-out split of `train_data`. `test_data` has no outcomes and is for demo predictions. Teammate 1's work is done:
+>
+> - **Final-tier model** (scored task): `python scripts/train_final_tier.py` → `outputs/test_event_predictions.csv`, one row per test event. Holdout (evaluated once): Critical recall 0.882 vs 0.789 for persistence. See [reports/model_development.md](reports/model_development.md).
+> - **Per-message Pc** (dashboard): `python scripts/train_row_model.py` then `python scripts/predict.py` → `outputs/test_predictions.csv`.
+> - **Submission:** `submission/submission.csv`, one row per test event with the predicted final tier and its probability (`python scripts/make_submission.py`). **One command for everything:** `./run_all.sh`.
+> - The row-level `test_submission.csv` below is obsolete; section 6 is resolved. Sections 3–5 and 7–9 still guide the risk-rules and dashboard work; the [README](README.md) has the current output columns and integration snippets.
+
 ## 1. What we will ship
 
 A local dashboard that reads conjunction telemetry, estimates `log10(Pc)` with a trained model, converts it to collision probability, applies the challenge's risk rules, and prioritizes encounters for human maneuver planning. It will include an encounter geometry view, risk history, miss distance, a 24-hour alert summary, explanations, and downloadable test predictions.
@@ -54,7 +61,7 @@ Validate finite values, nonnegative distances/sigmas/speeds, and required column
 
 ### Teammate 1 — Data and ML
 
-**Own:** `src/model.py`, `scripts/train.py`, `scripts/predict.py`, `reports/model_report.md`; generated artifacts under `artifacts/` and predictions under `outputs/`.
+**Own:** `src/model.py`, `scripts/train.py`, `scripts/predict.py`, `reports/archive/model_report.md` (now superseded; see `reports/model_development.md`); generated artifacts under `artifacts/` and predictions under `outputs/`.
 
 1. Build the explicit feature allowlist below. Keep `risk` as the training target and IDs as metadata.
 2. Validate units, missingness, duplicates, extreme sigmas, target distribution, and possible cross-file encounter overlap. Save an auditable summary without training on test labels.
@@ -71,6 +78,8 @@ Validate finite values, nonnegative distances/sigmas/speeds, and required column
 **Done when:** a clean run trains and predicts reproducibly; unseen object types and missing optional inputs work; group leakage checks pass; the model report includes baselines, rare-class counts, limitations, and actual measured metrics. No promised accuracy target before seeing validation results.
 
 ### Teammate 2 — Risk rules, event summaries, and integration logic
+
+> **Status: implemented** in `src/risk.py`, `src/events.py`, `scripts/build_dashboard_data.py`, `tests/test_risk.py` and `tests/test_pipeline.py`. Changes from the plan: events carry a *priority tier* combining the current assessment with the final-tier forecast (the forecast only applies while the latest message is 2+ days out), and windows use `time_to_tca` per the organizers. The dashboard can load `outputs/dashboard/*.csv` directly. See the README section "Risk rules and dashboard data".
 
 **Own:** `src/risk.py`, `src/events.py`, `tests/test_risk.py`, `tests/test_pipeline.py`.
 
@@ -89,7 +98,7 @@ Validate finite values, nonnegative distances/sigmas/speeds, and required column
 
 ### Teammate 3 — Dashboard and visual story
 
-**Own:** `app.py`, optional `ui/` helpers only if needed, and `reports/demo_script.md`.
+**Own:** `app.py`, optional `ui/` helpers only if needed, and `ui/DEMO_SCRIPT.md` (moved there; the Reflex dashboard's script is `dashboard/DEMO_SCRIPT.md`).
 
 1. Build a Streamlit layout from the shared sample output immediately; do not wait for model training.
 2. Add data source selection (test predictions or labeled training replay), object-type/tier filters, and a time-to-TCA filter. Display the source and replay context prominently.
@@ -139,25 +148,28 @@ Internal scored-row contract (one row per source row):
 | `recommended_action` | Monitor, review, or initiate maneuver planning |
 | `model_version` | Reproducible artifact identifier |
 
-For CSV, serialize list fields consistently as JSON strings. Keep the scoring submission separate from the richer dashboard export. The proposed default row submission is `row_id,event_id,predicted_risk`, where `predicted_risk` is log10(Pc); adapt the header to the organizer's exact template before submission.
+For CSV, serialize list fields consistently as JSON strings. Keep the event-level tier predictions separate from the richer per-message dashboard export. ~~The proposed default row submission is `row_id,event_id,predicted_risk`.~~ *Superseded:* the deliverable is one tier prediction per event (`outputs/test_event_predictions.csv`); there is no row-level submission.
 
 Suggested commands for the implementation team to make real:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-python scripts/train.py --input data/train_data.csv
-python scripts/predict.py --input data/test_data.csv --output outputs/test_predictions.csv
+pip install -r requirements-model.txt
 python -m unittest discover -s tests
-streamlit run app.py
+python scripts/train_final_tier.py     # final-tier model + outputs/test_event_predictions.csv
+python scripts/train_row_model.py      # per-message Pc model
+python scripts/predict.py              # outputs/test_predictions.csv
+streamlit run app.py                   # planned (Teammate 3)
 ```
 
-These are planned interfaces, not commands already implemented in this documentation-only commit.
+All but `streamlit run app.py` are implemented.
 
 ## 6. Resolve the scoring ambiguity without blocking the MVP
 
-**Default:** follow this hackathon brief: estimate the supplied row-level `risk` from permitted telemetry and output all test rows.
+> **Resolved:** the organizers confirmed final-event scoring (final **tier**, not final risk), with messages >= 2 days out and an event-level held-out split of `train_data`. The plan below was implemented and extended. Notable changes: the model forecasts the change in miss distance (Critical is almost always a distance outcome), the latest-message tier serves as a floor, and evaluation focuses on events whose final message is inside 2 days. Details in [reports/model_development.md](reports/model_development.md). The original text is kept for the record.
+
+**Original default:** follow this hackathon brief: estimate the supplied row-level `risk` from permitted telemetry and output all test rows.
 
 **Organizer question for the lead:** “Are you scoring each test row's contemporaneous risk, or one final risk per event using messages available at least two days before TCA? Please share the submission template and scoring metric.”
 

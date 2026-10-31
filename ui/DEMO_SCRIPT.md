@@ -1,4 +1,6 @@
-# Three-minute demo script — Conjunction Risk Dashboard
+# Three-minute demo script — Streamlit fallback dashboard
+
+> **Fallback only.** The main dashboard is the Reflex app in `dashboard/` (demo script: [dashboard/DEMO_SCRIPT.md](../dashboard/DEMO_SCRIPT.md)). This Streamlit app predates the final models. Its "live pipeline" scores messages with the default `predict_log10_pc` artifact (the superseded M3 model), and its training replay expects a `select_replay()` function that `src/events.py` does not provide (`snapshot(scored, cutoff_days)` covers that need). Prefer its *Synthetic demo data* or *Test predictions* modes, or use the Reflex app.
 
 **Goal:** show that the dashboard turns conjunction telemetry into a clear, honest, prioritised list of encounters that need a human decision.
 

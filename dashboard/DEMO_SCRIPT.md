@@ -16,9 +16,12 @@ Re-order it once the rubric is known.
 - Choose the data source:
   - **Real model outputs** if `outputs/event_predictions.csv` exists;
   - otherwise **Synthetic demo A**, and say so out loud.
-- Write the event IDs you will use here. In synthetic demo A:
-  - escalation: **166** (Elevated → Critical) or **39** (Safe → Critical);
-  - missed critical on the validation page: **298**.
+- Generate real outputs first: `./run_all.sh` from the repository root does everything and starts the app (or run `python scripts/export_dashboard_outputs.py`).
+- Event IDs to use. With **real model outputs** (re-check after any retraining):
+  - escalation: test event **1752** (observed Elevated at 1.01 km → predicted Critical, forecast 785 m, P(critical) 31%);
+  - confident safe: test event **1610** (61.6 km, P(safe) > 99%);
+  - missed critical on the validation page: held-out event **559** (predicted Elevated, ended Critical at 578 m).
+- In synthetic demo A: escalation **166** (Elevated → Critical) or **39** (Safe → Critical); missed critical **298**.
 - Keep a backup screen recording.
 
 ---
@@ -47,10 +50,18 @@ Click the escalation row. Read the **right panel** from top to bottom:
 
 1. **How dangerous, and is it escalating?** CURRENT OBSERVED: ELEVATED → PREDICTED FINAL: CRITICAL, "Escalation expected".
 2. **How much time?** The T− countdown, measured from the last eligible message. It is relative, not a live clock.
-3. **Key measurements:** each card says whether it is OBSERVED or PREDICTED. In dataset B the predicted final miss
-   distance reads "Not provided", because we never invent it.
-4. **Why this tier?** The rule that fired, with the threshold rows.
-5. **Next step:** *Refer for human manoeuvre assessment*. "We suggest a review. We do not plan manoeuvres."
+3. **Key measurements:** each card says whether it is OBSERVED or PREDICTED. With real outputs, the predicted final
+   **miss distance** card shows the model's forecast, and predicted final Pc shows "—". Our model forecasts distance,
+   because 831 of 834 Critical training events were distance-driven. In synthetic dataset B the predicted miss distance
+   reads "Not provided", because we never invent it.
+4. **Why this tier?** The threshold rows show which criterion fired. With real outputs, the event's reasons explain the tier:
+   the model flags Critical when the forecast final distance is ≤ 1.31 km (tuned to catch dangerous events early), and
+   never goes below the tier of the latest observed distance. So for forecasts between 1.0 and 1.31 km the threshold
+   check may say the 1 km rule "does not reproduce" the tier; point to the reasons list and say why.
+5. **How reliable?** The model-uncertainty bars show the model's calibrated probabilities. "Flagged Critical with
+   P(critical) 31%" means "plan for it; about one in three such events ends Critical". The flag favours recall; the
+   probability is the confidence.
+6. **Next step:** *Refer for human manoeuvre assessment*. "We suggest a review. We do not plan manoeuvres; a specialist decides."
 
 On the **left**, hover over a few CDM markers, then click one to inspect it. Say: "Each dot is a measured relative
 position. The Earth and the icons are only context." Switch to **Measured Geometry** and rotate the 3-D view to
@@ -61,7 +72,9 @@ show the same measurements without any decoration.
 - **Confusion matrix:** held-out training events, split by event_id. The test set has no labels, so it is never used here.
 - **Critical recall and precision:** give the counts as well as the percentages.
 - **Missed critical:** open one (for example **298**) to show we report failures too.
-- If synthetic: "These numbers demonstrate the page. Our real measured metrics are in the model report."
+- With real outputs the page shows the held-out result: **108 of 118 Critical events caught, 41 false alarms, 10 missed**
+  (all 1,800 held-out events). On events whose final message is inside 2 days, recall is 88% vs 79% for carrying the current tier forward.
+- If synthetic: "These numbers demonstrate the page. Our real measured metrics are in `reports/model_development.md`."
 
 ### 2:20–2:45 · Situational awareness (Global Tracking)
 
