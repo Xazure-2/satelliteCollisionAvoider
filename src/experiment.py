@@ -226,7 +226,7 @@ def run_experiment(root=ROOT, finalize=False, bootstrap_repetitions=200):
         details = json.loads(detail_path.read_text())
         report = build_report(selection,results,details,holdout_result,splits,data,run_dir,versions)
         (root/'reports').mkdir(exist_ok=True)
-        (root/'reports/model_report.md').write_text(report)
+        (root/'reports/archive/model_report.md').write_text(report)
         progress(f"Complete: {selected} selected; holdout {'completed/cached' if holdout_result else 'not opened'}; elapsed {time.time()-started:.1f}s")
         return dict(run_dir=str(run_dir), selection=selection, comparison=results,
                     validation_detail=details, holdout=holdout_result)

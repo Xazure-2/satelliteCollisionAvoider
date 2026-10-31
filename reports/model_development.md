@@ -1,37 +1,86 @@
-# Model development: how we iterated from a row-level regressor to a final-tier forecaster
+# Model development: the final system, its results, and how we got there
 
-This document records the full modelling process for Challenge #1: what we built first, what the reviews found, how the task changed, every experiment we ran, the results, and why the final model looks the way it does. Detailed generated tables are in the linked reports.
+This is the main document for Challenge #1. Part A explains the final system and its results. Part B records how we got there: what we built first, what the reviews found, how the task changed, every experiment, and why the final system looks the way it does. Detailed tables are in the generated reports; [README.md](README.md) indexes them.
 
 | Report | Contents |
 |---|---|
-| [eda_summary.md](eda_summary.md) | Data audit, frozen event split |
-| [model_report.md](model_report.md) | First modelling pass (M3, row-level) |
-| [experiment_v2.md](experiment_v2.md) | Row-level experiment v2 |
-| [final_tier_report.md](final_tier_report.md) | Final-tier experiments, selection, **holdout result** |
-| [final_tier_ensembles.md](final_tier_ensembles.md) | Ensembles, stacking, nested search, row-level Pc |
+| [final_tier_report.md](final_tier_report.md) | Final-tier experiments, selection, **holdout result** (generated) |
+| [tier_probability_report.md](tier_probability_report.md) | Probability calibration, CV and holdout (generated) |
+| [final_tier_ensembles.md](final_tier_ensembles.md) | Ensembles, stacking, nested search, row-level Pc (generated) |
+| [experiment_v2.md](experiment_v2.md) | Row-level experiment behind the dashboard's per-message Pc (generated) |
 | [literature_review.md](literature_review.md) | Prior work and how it shaped the experiments |
+| [eda_summary.md](eda_summary.md) | Data audit and frozen event split (generated) |
+| [archive/model_report.md](archive/model_report.md) | First modelling pass (M3), superseded |
 
-## Headline result
+# Part A — The final system
 
-**Task:** predict each conjunction event's final risk tier (Safe / Elevated / Critical) from messages received at least 2 days before closest approach.
+## The task
 
-**Model:** a gradient-boosted regressor forecasts how much the miss distance will change between the latest >= 2-day message and the final message. It flags Critical when the forecast final distance is about 1.3 km or less, and Elevated when it is about 5.2 km or less. The current tier from the latest message (persistence) acts as a floor the model can only raise.
+Satellite operators receive conjunction data messages (CDMs): repeated warnings, over the days before closest approach, that two objects will pass close. Each gives a miss distance, a collision probability (Pc) and uncertainties. The organizers' task: **using only messages received at least 2 days before closest approach, predict the risk tier at each event's final message, with a probability.** Tiers follow the brief:
 
-**Holdout (evaluated once, 1,334 forecast events, 76 Critical):**
+- **Critical (manoeuvre planning required):** Pc ≥ 1e-4 or miss distance < 1,000 m
+- **Elevated:** not Critical, and Pc ≥ 1e-6 or miss distance 1,000–5,000 m
+- **Safe:** Pc < 1e-6 and miss distance > 5,000 m
+
+The value is early warning: flag dangerous encounters 2+ days ahead, while a manoeuvre can still be planned.
+
+## Two models, one on top of the other
+
+```
+event's messages ≥ 2 days out (permitted columns only; test risk never read)
+        │
+        ▼
+ ① FINAL-TIER MODEL (frozen: final-tier-d7496dd831de)
+    • ~45 event features: latest message + trends (distance shrinking? uncertainty narrowing?)
+    • gradient-boosted regressor forecasts the change in miss distance up to the final message
+    • tier: Critical if forecast ≤ 1.31 km, Elevated if ≤ 5.16 km, else Safe
+    • floor: never below the tier implied by the latest observed miss distance
+        │                                   │
+        │ forecast final distance            ▼
+        ▼                                   predicted final TIER  ──────────────┐
+ ② PROBABILITY LAYER (calibrator)                                               │
+    • inputs: the forecast, current distance tier, latest distance,             │
+      max_risk_estimate, time to closest approach                               │
+    • multinomial logistic regression → P(Safe), P(Elevated), P(Critical)       │
+        │                                                                       │
+        └───────────────► submission/submission.csv ◄───────────────────────────┘
+                          tier + probability per test event
+```
+
+**① The final-tier model decides the tier.** Analysis showed Critical is almost always a distance outcome: 831 of 834 Critical training events were Critical because the final miss distance was under 1 km, not because of Pc. The strongest simple baseline carries the latest tier forward (persistence). So the model forecasts **how the miss distance will change** before the final message, then applies cut-offs. The cut-offs (1.31 km and 5.16 km) sit slightly above the official 1 km and 5 km on purpose: they were tuned to maximise F2, which weights catching dangerous events over avoiding false alarms. The persistence floor means the model can only raise attention, never lower what the latest message already shows.
+
+**② The probability layer says how likely each final tier is.** The frozen model outputs a tier and a forecast distance but no probability, and the brief asks for one. Rather than retrain and lose the frozen, already-evaluated model, we added a separate small model that reads the frozen model's output. It learned from historical events how often each combination of forecast and current state actually ended Safe, Elevated or Critical. **It never changes the tier**, so the tier model's validated results still stand.
+
+**The tier and the probability answer different questions.** Because the tier cut-offs favour recall, an event can be flagged Critical with P(Critical) below 0.5. Example from the submission: test event 1 has a forecast final distance of 1,051 m, so it is flagged **Critical** (≤ 1.31 km), with **P(Critical) = 0.63**. Read that as "start manoeuvre-planning attention; about a 63% chance it ends Critical".
+
+## Headline results (held-out events, each evaluated once)
+
+**Tier** (1,334 held-out events whose final message falls inside 2 days, 76 Critical):
 
 | | Critical recall | Critical precision | Critical F2 | Missed Critical |
 |---|---|---|---|---|
 | **Our model** | **0.882** [0.81–0.95] | 0.677 [0.58–0.77] | **0.831** [0.76–0.89] | **9** |
 | Persistence baseline | 0.789 [0.70–0.88] | 0.811 [0.72–0.90] | 0.794 [0.72–0.87] | 16 |
 
-- **Fewer missed collisions, with statistical support.** A paired bootstrap on the same holdout events gives 2 to 13 fewer missed Critical events and recall up 3 to 16 points; every resample favours the model.
+- **Fewer missed Critical events, with statistical support.** A paired bootstrap on the same holdout events gives 2 to 13 fewer missed Critical events and recall up 3 to 16 points; every resample favours the model.
 - **F2 is higher, but the holdout is too small to call that significant:** the paired interval is −0.018 to +0.099, with 90% of resamples above zero. Cross-validation (514 Critical events) showed a significant F2 gain of +0.010 to +0.049.
-- **The cost is false alarms:** 32 vs 14 non-Critical events flagged Critical (mostly Elevated events), the trade the F2 metric is designed to accept.
+- **The cost is false alarms:** 32 vs 14 non-Critical events flagged Critical (mostly Elevated events), the trade F2 is designed to accept.
 - **The model generalizes as expected:** holdout F2 0.831 vs 0.839 in cross-validation.
+
+**Probabilities** (same held-out events): log loss 0.212 vs 0.241 and Brier score 0.107 vs 0.114 for P(final tier given current distance tier). They are well calibrated: events given P(Critical) of 0.8–1.0 ended Critical 91% of the time (section 8b).
+
+## Supporting pieces (not part of the submission)
+
+- **Per-message Pc model** (`src/row_model.py`): estimates Pc for every individual message, for the dashboard's risk-trend charts. Its Elevated-by-Pc calls are recall-heavy (98% recall, 29% precision in CV), so it is context, not the decision.
+- **Risk rules** (`src/risk.py`, `src/events.py`): apply the brief's thresholds to produce reasons ("miss distance 0.72 km is below 1 km"), recommended actions, time-to-TCA warning windows, the action queue and insight text.
+- **Dashboard** (`dashboard/`): shows predictions, probabilities, geometry and the held-out validation (`python scripts/export_dashboard_outputs.py` feeds it).
+- **Reproduction:** `./run_all.sh` rebuilds everything from the raw data and starts the dashboard.
+
+# Part B — How we got there
 
 ## 1. Starting point: the first modelling pass (M3)
 
-The first pipeline treated the problem as **row-level regression**: predict each message's `risk` = log10(Pc) from the 12 permitted columns. It used a frozen 70/15/15 event split (seed 42), compared median/mean dummies with gradient-boosted trees (median imputation, native missing values, geometry features), and opened its holdout once. The selected model, M3, reached validation Pc-critical F2 0.44 (row level).
+Full report: [archive/model_report.md](archive/model_report.md). The first pipeline treated the problem as **row-level regression**: predict each message's `risk` = log10(Pc) from the 12 permitted columns. It used a frozen 70/15/15 event split (seed 42), compared median/mean dummies with gradient-boosted trees (median imputation, native missing values, geometry features), and opened its holdout once. The selected model, M3, reached validation Pc-critical F2 0.44 (row level).
 
 ## 2. Review of M3: what was wrong
 
@@ -122,7 +171,7 @@ Motivated by the [literature review](literature_review.md), which found the Kelv
 
 ## 8. Holdout evaluation
 
-Run once with `python scripts/train_final_tier.py --finalize`; the ledger (`artifacts/final_tier/holdout_ledger.json`) records model version `final-tier-d7496dd831de` and blocks any re-evaluation of a different model. Results are in the headline section above and [final_tier_report.md](final_tier_report.md).
+Run once with `python scripts/train_final_tier.py --finalize`; the ledger (`artifacts/final_tier/holdout_ledger.json`) records model version `final-tier-d7496dd831de` and blocks any re-evaluation of a different model. Results are in Part A (headline results) and [final_tier_report.md](final_tier_report.md).
 
 | Holdout confusion matrix (forecast events) | Pred. Safe | Pred. Elevated | Pred. Critical |
 |---|---|---|---|
@@ -171,12 +220,17 @@ The row-level experiment v2 winner (physics features, target floored at −6.001
 3. **Domain fixes beat model complexity.** Floored targets, placeholder sigmas and the `max_risk_estimate` bound mattered more than ensembles or tuning.
 4. **Promote, don't demote.** A persistence floor with recall-tuned thresholds is a principled version of the winning Kelvins approach.
 5. **Report uncertainty honestly.** Paired bootstraps separate real gains (fewer missed Critical events) from noise (most model-vs-model differences).
+6. **Add requirements without disturbing validated parts.** The probability layer sits on top of the frozen tier model, so a new submission requirement did not invalidate the tier model's holdout result.
+
+# Limitations and reproduction
 
 ## Limitations
 
 - **Critical is mostly a miss-distance outcome.** The permitted columns lack along-track and cross-track sigmas and orbital state, which limits how well the last two days of distance evolution can be forecast.
 - **The holdout is small** (76 Critical forecast events), so its intervals are wide.
-- **Scores are not calibrated collision probabilities;** thresholds can move for a different operating point, with a new confusion matrix.
+- **Tier probabilities are calibrated against historical final tiers,** not physical collision probabilities; Pc remains an input to the tier definition, not this output.
+- **The tier cut-offs are an operating point.** They can move (e.g. for fewer false alarms), with a new confusion matrix; the probabilities stay valid because they do not depend on the cut-offs.
+- **No final Pc forecast.** The model forecasts final tier and miss distance; the dashboard shows predicted final Pc as "not provided".
 - **Tier thresholds follow the hackathon brief,** not certification against a specific NASA or ESA standard.
 
 ## Reproduce

@@ -61,7 +61,7 @@ Validate finite values, nonnegative distances/sigmas/speeds, and required column
 
 ### Teammate 1 — Data and ML
 
-**Own:** `src/model.py`, `scripts/train.py`, `scripts/predict.py`, `reports/model_report.md`; generated artifacts under `artifacts/` and predictions under `outputs/`.
+**Own:** `src/model.py`, `scripts/train.py`, `scripts/predict.py`, `reports/archive/model_report.md` (now superseded; see `reports/model_development.md`); generated artifacts under `artifacts/` and predictions under `outputs/`.
 
 1. Build the explicit feature allowlist below. Keep `risk` as the training target and IDs as metadata.
 2. Validate units, missingness, duplicates, extreme sigmas, target distribution, and possible cross-file encounter overlap. Save an auditable summary without training on test labels.
@@ -98,7 +98,7 @@ Validate finite values, nonnegative distances/sigmas/speeds, and required column
 
 ### Teammate 3 — Dashboard and visual story
 
-**Own:** `app.py`, optional `ui/` helpers only if needed, and `reports/demo_script.md`.
+**Own:** `app.py`, optional `ui/` helpers only if needed, and `ui/DEMO_SCRIPT.md` (moved there; the Reflex dashboard's script is `dashboard/DEMO_SCRIPT.md`).
 
 1. Build a Streamlit layout from the shared sample output immediately; do not wait for model training.
 2. Add data source selection (test predictions or labeled training replay), object-type/tier filters, and a time-to-TCA filter. Display the source and replay context prominently.
