@@ -79,6 +79,30 @@ table = prediction_frame(telemetry_frame, load_row_model())   # needs event_id; 
 
 **Caveat:** the row model is tuned for recall, as the brief's F2 metric favours. In cross-validation it catches 98% of messages that are truly Elevated-or-worse by Pc, but only about 29% of its Elevated-by-Pc flags are correct. Use the final-tier model to prioritize events, and per-message Pc for context. Neither output is a calibrated probability of an observed collision.
 
+## Run the dashboard with real predictions
+
+The Reflex dashboard in `dashboard/` reads `outputs/event_predictions.csv` and `outputs/cdm_history.csv` (its v2 contract). Generate them from the trained models, then start the app:
+
+```bash
+# 1. From the repository root: export predictions (about 5 s; checked with the dashboard's own loader)
+python scripts/export_dashboard_outputs.py
+
+# 2. Start the dashboard (first run installs JavaScript dependencies, 1-2 minutes)
+cd dashboard
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+reflex run --env prod --single-port
+```
+
+Open http://localhost:3000, choose **Real model outputs (outputs/)** in the top-bar data selector and press reload. If you retrain a model, rerun step 1 and reload.
+
+What the export contains:
+
+- **Test events** (`source=test`, 2,167): the final-tier prediction and forecast final miss distance at the cutoff CDM (latest message >= 2 days out), the observed-distance tier at that CDM, reasons, quality flags and full CDM history. Test `risk` is never read, so observed Pc is empty.
+- **Held-out training events** (`source=train`, `split=holdout`, 1,800): the same predictions, out of sample for both models, plus observed risk history and actual final outcomes. These drive the Model Validation page, which reproduces the holdout result (108 of 118 Critical events caught, 41 false alarms).
+- **Not supplied:** predicted final Pc and tier probabilities. The final-tier model forecasts tier and miss distance, not Pc, so the dashboard shows those fields as "not provided" (two expected loader warnings).
+- **Alert thresholds:** the model flags Critical when the forecast final distance is <= 1.31 km (tuned for recall), and the latest message's distance tier is a floor. The encounter page's threshold check may report that a Critical tier is "not reproduced" from the 1 km rule; each event's reasons state the tuned thresholds and the floor.
+
 ## Risk rules and dashboard data
 
 `src/risk.py` holds the brief's rules as pure functions: `assess(log_pc, miss_distance_m)` returns the tier, which trigger fired (Pc and/or distance), readable reasons such as "Miss distance 0.72 km is below 1 km", and a recommended action. Unusable inputs give `needs_review`, never safe, unless a valid input already proves Critical. `score_rows` builds the per-message table, converting units once (days → hours, metres → km).
