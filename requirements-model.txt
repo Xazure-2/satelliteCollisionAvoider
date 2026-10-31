@@ -1,3 +1,4 @@
 -r requirements-eda.txt
 joblib==1.6.0
 threadpoolctl==3.7.0
+openpyxl==3.1.5
