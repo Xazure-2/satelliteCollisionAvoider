@@ -1,21 +1,24 @@
 # ORBITAL INTELLIGENCE — Reflex dashboard
 
-AI-powered satellite collision early-warning interface for Airbus Challenge #1 (Teammate 3).
-The original Streamlit dashboard (`../app.py`, `../ui/`) is untouched and remains the fallback.
+AI-powered satellite collision early-warning interface for Challenge #1. It shows the **real model outputs**:
+predicted final tiers with probabilities, forecast final miss distance and Pc, encounter geometry and the held-out
+validation. The quickest start is `./run_all.sh` from the repository root, which trains everything, writes the
+outputs and launches this app.
 
-> **Status:** real model outputs are available, including tier probabilities. Run `python scripts/export_dashboard_outputs.py` from the
-> repository root to write `outputs/event_predictions.csv` and `outputs/cdm_history.csv` in the v2 contract, then
-> choose **Real model outputs** in the top bar. Synthetic datasets remain available and clearly labelled.
+> **Data:** the app loads `outputs/event_predictions.csv` and `outputs/cdm_history.csv` automatically (written by
+> `python scripts/export_dashboard_outputs.py`). There are no synthetic encounter datasets; if the files are missing,
+> the app shows how to generate them. Only the Global Tracking globe uses a separate, labelled synthetic simulation,
+> because the challenge data has no absolute positions.
 
 ## Run it
 
 From the repository root, in GitHub Codespaces or locally (Python 3.11+, Node is downloaded by Reflex on first run):
 
 ```bash
+# from the repository root, once the outputs exist (./run_all.sh does all of this)
+python scripts/export_dashboard_outputs.py
 cd dashboard
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-reflex run --env prod --single-port
+reflex run --env prod --single-port      # with the repository .venv active
 ```
 
 Open the URL Reflex prints (port **3000**). In Codespaces, a pop-up offers **Open in Browser**; otherwise open the
@@ -31,18 +34,18 @@ After editing code, stop the app with `Ctrl+C` and start it again.
 
 ```bash
 cd dashboard
-python -m unittest discover -s tests -v          # data layer: contract, adapters, synthetic data, analytics
+python -m unittest discover -s tests -v          # data layer: contract, adapters, analytics, formatting (uses a test-only fixture)
 ```
 
-Browser end-to-end checks (app must be running; needs Node and Playwright):
+Browser end-to-end checks (app running with real outputs; needs Node and Playwright):
 
 ```bash
 npm install playwright@1 && npx playwright install chromium
 node tests/e2e_browser.mjs http://localhost:3000
 ```
 
-They cover summary cards, filters, sorting, export, dataset switching, the missing-data error, encounter details,
-chart units, validation maths, and globe rotate / zoom / hover / click / focus / reset / filters / 12,000 markers.
+They cover the real-data badge, summary cards, the filled and readable Pred. Pc column, filters, sorting, export,
+encounter details, chart units, validation maths, and globe rotate / zoom / hover / click / focus / reset / filters / 12,000 markers.
 
 ## Pages
 
@@ -66,13 +69,12 @@ dashboard/
 │   ├── state.py            UI state ↔ data layer (the only place they meet)
 │   ├── data/               NO UI CODE
 │   │   ├── contract.py     v2 contract + validation (never assigns tiers)
-│   │   ├── adapters.py     synthetic / real sources, COLUMN_ALIASES mapping
+│   │   ├── adapters.py     loads the model outputs, COLUMN_ALIASES mapping
 │   │   ├── analytics.py    filters, counts, windows, queue order, validation metrics, formatting
-│   │   ├── synthetic_encounters.py   two synthetic encounter datasets (A, B)
 │   │   └── synthetic_globe.py        separate synthetic orbital population for the globe
 │   ├── components/         layout, widgets, Plotly charts, globe wrapper + orbit_globe.jsx
 │   └── pages/              operations.py, analysis.py
-└── tests/                  unit tests + browser e2e
+└── tests/                  unit tests (synthetic_fixture.py is test-only data) + browser e2e
 ```
 
 * The UI never classifies risk. Tiers come from the data (the risk pipeline). The encounter page *explains* the
@@ -85,13 +87,18 @@ dashboard/
   draws an orbit, an absolute position, a predicted final position, or a predicted miss distance the model did not
   supply
   (`analytics.reliability`, `analytics.next_step`).
-* A missing or invalid real dataset shows an error. It is **never** silently replaced with synthetic data.
-* The globe data is a separate synthetic simulation and is never linked to Airbus encounters.
+* A missing or invalid dataset shows an error with the command to generate it. It is **never** replaced with made-up data.
+* The globe data is a separate synthetic simulation and is never linked to challenge encounters.
+* **Number formats:** collision probabilities are shown as odds ("1 in 43K", "1 in 2.1M"); anything below 1 in
+  10 million reads "< 1 in 10M", and the −30 placeholder reads "≈ 0". Tier probabilities read "<1%" / ">99%" at the
+  extremes. The log10(Pc) value is shown alongside where precision matters.
 
-## Connecting real model outputs
+## Model outputs (data contract)
 
-Put two CSV files in `outputs/` at the repository root (or set `ORBITAL_OUTPUTS_DIR`), then choose
-**Real model outputs** in the top-bar selector and press reload.
+`python scripts/export_dashboard_outputs.py` writes these two files to `outputs/` at the repository root (or set
+`ORBITAL_OUTPUTS_DIR`); press reload in the top bar after regenerating them. Our export fills the predicted final
+tier, tier probabilities, forecast final miss distance and forecast final Pc (`src/final_pc.py`), plus held-out
+actual outcomes for the validation page.
 
 **`outputs/event_predictions.csv`**: one row per `(source, event_id)`.
 

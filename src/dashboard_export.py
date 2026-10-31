@@ -9,7 +9,8 @@ Two tables, written to outputs/:
 Mapping decisions:
 - predicted_final_tier and predicted_final_miss_distance_m come from the final-tier model (basis
   "predicted"); p_safe/p_elevated/p_critical come from the calibrated probability layer
-  (src/tier_probability.py). The model does not forecast final Pc, so predicted_final_log10_pc is empty.
+  (src/tier_probability.py); predicted_final_log10_pc comes from the separate final-Pc forecast
+  (src/final_pc.py, floored at -8 = "below 1e-8"). Neither changes the tier.
 - observed_tier is the tier implied by the observed miss distance at the cutoff CDM, the floor the
   model can only raise. Test `risk` is never read, so observed Pc is empty for test events.
 - Held-out training events (source "train", split "holdout") are out of sample for both models and
@@ -46,12 +47,14 @@ def reasons_for(cutoff_m, forecast_m, observed, predicted, pc_text, cuts_m):
     return r
 
 
-def export_tables(messages, row_bundle, tier_bundle, source, split, observed_risk=None, labels=None, prob_bundle=None):
+def export_tables(messages, row_bundle, tier_bundle, source, split, observed_risk=None, labels=None, prob_bundle=None,
+                  final_pc_bundle=None):
     """Build (events, history) for one source. `messages` holds event_id, row_id and permitted telemetry only.
 
     observed_risk: optional Series of log10(Pc) aligned to messages (held-out training only).
     labels: optional final_labels() frame indexed by event_id (held-out training only).
     prob_bundle: optional tier-probability calibrator (src/tier_probability.py) for p_safe/p_elevated/p_critical.
+    final_pc_bundle: optional final-Pc forecaster (src/final_pc.py) for predicted_final_log10_pc / _pc.
     """
     if 'risk' in messages:
         raise ValueError('Pass permitted telemetry only; observed risk goes in observed_risk for held-out data.')
@@ -100,6 +103,13 @@ def export_tables(messages, row_bundle, tier_bundle, source, split, observed_ris
         proba = predict_probabilities(event_features(messages), tier_bundle, prob_bundle).reindex(cut.index)
         events['p_safe'], events['p_elevated'], events['p_critical'] = (
             proba.Safe.to_numpy(), proba.Elevated.to_numpy(), proba.Critical.to_numpy())
+    if final_pc_bundle is not None:
+        from src.final_tier import event_features
+        from src.final_pc import predict as predict_final_pc
+        feats = event_features(messages)
+        log_pc = pd.Series(predict_final_pc(final_pc_bundle['pipeline'], feats), index=feats.index).reindex(cut.index).to_numpy()
+        events['predicted_final_log10_pc'] = log_pc
+        events['predicted_final_pc'] = 10.0 ** log_pc
     if observed_risk is not None:
         by_row = pd.Series(observed_risk.to_numpy(), index=messages.row_id.to_numpy())
         events['observed_log10_pc'] = by_row.reindex(cut.row_id).to_numpy()

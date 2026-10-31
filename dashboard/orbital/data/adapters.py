@@ -1,11 +1,12 @@
-"""Data sources for the dashboard: synthetic demos and real model outputs.
+"""Data source for the dashboard: the real model outputs.
 
-* Real outputs are read from ``outputs/event_predictions.csv`` and
+* Outputs are read from ``outputs/event_predictions.csv`` and
   ``outputs/cdm_history.csv`` at the repository root (or ORBITAL_OUTPUTS_DIR).
+  Generate them with ``./run_all.sh`` or ``python scripts/export_dashboard_outputs.py``.
 * If the model team uses different column names, add them to COLUMN_ALIASES;
   that is the only mapping point.
-* A missing or invalid real dataset raises DataUnavailable. The dashboard never
-  substitutes synthetic values for missing real predictions.
+* A missing or invalid dataset raises DataUnavailable and the dashboard shows the
+  error; it never substitutes made-up values.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from pathlib import Path
 import pandas as pd
 
 from . import contract
-from .synthetic_encounters import SPECS, make_synthetic
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -47,7 +47,7 @@ COLUMN_ALIASES = {
 }
 
 REAL_KEY = "real"
-SOURCE_LABELS = {**{k: s.label for k, s in SPECS.items()}, REAL_KEY: "Real model outputs (outputs/)"}
+SOURCE_LABELS = {REAL_KEY: "Model outputs (outputs/)"}
 
 
 class DataUnavailable(RuntimeError):
@@ -61,7 +61,6 @@ class DataUnavailable(RuntimeError):
 class Dataset:
     key: str
     label: str
-    synthetic: bool
     events: pd.DataFrame
     history: pd.DataFrame
     model_version: str
@@ -84,14 +83,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def _finish(key, label, synthetic, events, history, files) -> Dataset:
+def _finish(key, label, events, history, files) -> Dataset:
     events, ev_report = contract.validate_events(events)
     history, hist_report = contract.validate_history(history)
     warnings = ev_report.warnings + hist_report.warnings + contract.check_links(events, history)
     versions = sorted(events["model_version"].unique())
     if len(versions) > 1:
         warnings.append("Several model versions in one file: " + ", ".join(versions))
-    return Dataset(key=key, label=label, synthetic=synthetic, events=events, history=history,
+    return Dataset(key=key, label=label, events=events, history=history,
                    model_version=", ".join(versions), loaded_at=_now(), files=files, warnings=warnings)
 
 
@@ -105,8 +104,8 @@ def load_real(directory: Path | None = None) -> Dataset:
                     "(row level). The updated brief needs one predicted FINAL tier per event.")
         raise DataUnavailable(
             "Real predictions unavailable: outputs/event_predictions.csv not found." + hint,
-            "Ask the model team to export event-level predictions in the v2 contract "
-            "(see dashboard/README.md), then press Reload.",
+            "From the repository root run ./run_all.sh (or python scripts/export_dashboard_outputs.py "
+            "after training), then press Reload.",
         )
     if not history_path.exists():
         raise DataUnavailable(
@@ -119,20 +118,18 @@ def load_real(directory: Path | None = None) -> Dataset:
     except Exception as exc:  # unreadable CSV
         raise DataUnavailable(f"Could not read the model output files: {exc}") from exc
     try:
-        return _finish(REAL_KEY, SOURCE_LABELS[REAL_KEY], False, events, history,
+        return _finish(REAL_KEY, SOURCE_LABELS[REAL_KEY], events, history,
                        [str(events_path), str(history_path)])
     except contract.ContractError as exc:
         raise DataUnavailable(f"Model outputs do not match the v2 contract. {exc}") from exc
 
 
-def load_synthetic(key: str) -> Dataset:
-    events, history = make_synthetic(key)
-    return _finish(key, SPECS[key].label, True, events, history, [])
+def from_frames(events: pd.DataFrame, history: pd.DataFrame, label: str = "In-memory frames") -> Dataset:
+    """Validate in-memory frames as a dataset (used by tests)."""
+    return _finish("frames", label, events, history, [])
 
 
-def load(key: str) -> Dataset:
+def load(key: str = REAL_KEY) -> Dataset:
     if key == REAL_KEY:
         return load_real()
-    if key in SPECS:
-        return load_synthetic(key)
     raise DataUnavailable(f"Unknown data source '{key}'.")

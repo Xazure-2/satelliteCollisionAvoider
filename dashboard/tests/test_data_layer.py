@@ -8,18 +8,38 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np  # noqa: E402
 
 from orbital.data import adapters, analytics, contract  # noqa: E402
-from orbital.data.synthetic_encounters import _label_tier, make_synthetic  # noqa: E402
 from orbital.data.synthetic_globe import make_population  # noqa: E402
+from synthetic_fixture import _label_tier, make_synthetic  # noqa: E402  (test-only data)
 
 
-class SyntheticDatasets(unittest.TestCase):
-    def test_both_datasets_validate_and_differ(self):
-        a, b = adapters.load("synthetic_a"), adapters.load("synthetic_b")
-        self.assertTrue(a.synthetic and b.synthetic)
+def load_fixture(key):
+    """Validate a synthetic fixture through the same path as real outputs."""
+    events, history = make_synthetic(key)
+    return adapters.from_frames(events, history, label=f"fixture {key}")
+
+
+class Sources(unittest.TestCase):
+    def test_only_real_outputs_are_a_source(self):
+        self.assertEqual(list(adapters.SOURCE_LABELS), [adapters.REAL_KEY])
+        for key in ("synthetic_a", "synthetic_b"):
+            with self.assertRaises(adapters.DataUnavailable):
+                adapters.load(key)
+
+    def test_missing_outputs_explain_how_to_generate(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(adapters.DataUnavailable) as ctx:
+                adapters.load_real(Path(d))
+        self.assertIn("run_all.sh", ctx.exception.detail)
+
+
+class FixtureDatasets(unittest.TestCase):
+    def test_both_fixtures_validate_and_differ(self):
+        a, b = load_fixture("synthetic_a"), load_fixture("synthetic_b")
         self.assertNotEqual(len(a.events), len(b.events))
         self.assertNotEqual(analytics.tier_counts(a.events), analytics.tier_counts(b.events))
         self.assertTrue(a.model_version.startswith("SYNTHETIC"))
@@ -127,7 +147,6 @@ class RealAdapter(unittest.TestCase):
             events.to_csv(Path(d) / "event_predictions.csv", index=False)
             history.to_csv(Path(d) / "cdm_history.csv", index=False)
             ds = adapters.load_real(Path(d))
-        self.assertFalse(ds.synthetic)
         self.assertEqual(len(ds.events), len(events))
 
     def test_invalid_real_file_is_not_replaced_by_synthetic(self):
@@ -140,12 +159,25 @@ class RealAdapter(unittest.TestCase):
 
 class Analytics(unittest.TestCase):
     def setUp(self):
-        self.ds = adapters.load("synthetic_a")
+        self.ds = load_fixture("synthetic_a")
 
     def test_formatting(self):
         self.assertEqual(analytics.fmt_pc(-30.0), "≈ 0")
-        self.assertEqual(analytics.fmt_pc(-4.0), "1.0e-04")
+        self.assertEqual(analytics.fmt_pc(-4.0), "1 in 10K")
+        self.assertEqual(analytics.fmt_pc(-6.0), "1 in 1M")
+        self.assertEqual(analytics.fmt_pc(-4.638), "1 in 43K")
+        self.assertEqual(analytics.fmt_pc(-5.677), "1 in 480K")
+        self.assertEqual(analytics.fmt_pc(-7.0), "< 1 in 10M")
+        self.assertEqual(analytics.fmt_pc(-7.9), "< 1 in 10M")
+        self.assertEqual(analytics.fmt_pc(-6.9), "1 in 7.9M")
+        self.assertEqual(analytics.fmt_pc(-2.0), "1 in 100")
         self.assertEqual(analytics.fmt_pc(float("nan")), "—")
+        self.assertNotIn("e-", analytics.fmt_pc(-7.3))
+        self.assertEqual(analytics.fmt_prob(0.002), "<1%")
+        self.assertEqual(analytics.fmt_prob(0.0), "0%")
+        self.assertEqual(analytics.fmt_prob(0.997), ">99%")
+        self.assertEqual(analytics.fmt_prob(1.0), "100%")
+        self.assertEqual(analytics.fmt_prob(0.63), "63%")
         self.assertEqual(analytics.fmt_countdown(2.5), "T−2 d 12 h")
         self.assertEqual(analytics.fmt_m(1234.4), "1,234 m")
 
@@ -273,7 +305,7 @@ class DecisionSupport(unittest.TestCase):
 
     def test_every_synthetic_event_is_explainable(self):
         for key in ("synthetic_a", "synthetic_b"):
-            ds = adapters.load(key)
+            ds = load_fixture(key)
             for ev in ds.events.to_dict("records"):
                 t = analytics.threshold_checks(ev)
                 self.assertTrue(t["consistent"], (key, ev["event_id"]))
@@ -284,7 +316,7 @@ class EncounterView(unittest.TestCase):
     def setUp(self):
         from orbital.data import encounter_view
         self.ev_mod = encounter_view
-        self.ds = adapters.load("synthetic_a")
+        self.ds = load_fixture("synthetic_a")
 
     def _event(self, eid):
         ev = self.ds.events[self.ds.events["event_id"] == eid].iloc[0].to_dict()
@@ -305,7 +337,7 @@ class EncounterView(unittest.TestCase):
         self.assertEqual(int(latest["id"]), int(ev["cutoff_row_id"]))
 
     def test_no_invented_predicted_miss(self):
-        ds_b = adapters.load("synthetic_b")
+        ds_b = load_fixture("synthetic_b")
         ev = ds_b.events.iloc[0].to_dict()
         sc = self.ev_mod.scene(ev, ds_b.history[ds_b.history["event_id"] == ev["event_id"]])
         self.assertIsNone(sc["predicted_miss_km"])

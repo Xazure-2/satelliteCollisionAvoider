@@ -28,19 +28,12 @@ def validation() -> rx.Component:
             rx.foreach(row[1:], lambda cell: rx.el.td(cell.split("|")[0], class_name=cell.split("|")[1])),
         )
 
-    banner = rx.cond(
-        AppState.is_synthetic,
-        rx.el.div(rx.icon("flask-conical", size=15),
-                  rx.el.span(rx.el.b("Demonstration only. "),
-                             "These metrics are computed from SYNTHETIC held-out events and say nothing about the "
-                             "real model's performance. Load real model outputs to see measured results."),
-                  class_name="oi-synbar", data_testid="validation-demo"),
-        rx.el.div(rx.icon("shield-check", size=15),
-                  rx.el.span("Computed from held-out training events (", V["splits"], ") in the loaded model output. "
-                             "Test-set events have no final labels and are never used here."),
-                  class_name="oi-synbar", style={"color": "#86efac", "border_color": "rgba(34,197,94,0.45)",
-                                                 "background": "rgba(34,197,94,0.06)"}),
-    )
+    banner = rx.el.div(rx.icon("shield-check", size=15),
+                       rx.el.span("Computed from held-out training events (", V["splits"], ") in the loaded model output. "
+                                  "Test-set events have no final labels and are never used here."),
+                       class_name="oi-synbar", data_testid="validation-real",
+                       style={"color": "#86efac", "border_color": "rgba(34,197,94,0.45)",
+                              "background": "rgba(34,197,94,0.06)"})
     return shell(
         "/validation", "Model Validation",
         banner,

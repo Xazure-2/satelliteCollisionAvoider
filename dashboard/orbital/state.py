@@ -58,7 +58,7 @@ def _num(value) -> float | None:
 
 
 class AppState(rx.State):
-    source_key: str = "synthetic_a"
+    source_key: str = adapters.REAL_KEY
     data_version: int = 0
     sidebar_open: bool = True
 
@@ -107,11 +107,6 @@ class AppState(rx.State):
         return err.detail if err else ""
 
     @rx.var
-    def is_synthetic(self) -> bool:
-        ds = _dataset(self.source_key, self.data_version)
-        return bool(ds and ds.synthetic)
-
-    @rx.var
     def source_label(self) -> str:
         return adapters.SOURCE_LABELS.get(self.source_key, self.source_key)
 
@@ -135,18 +130,7 @@ class AppState(rx.State):
         ds = _dataset(self.source_key, self.data_version)
         if not ds:
             return []
-        return ds.files or ["Generated in memory by orbital/data/synthetic_encounters.py"]
-
-    @rx.var
-    def source_options(self) -> list[list[str]]:
-        return [[k, v] for k, v in adapters.SOURCE_LABELS.items()]
-
-    @rx.event
-    def set_source(self, key: str):
-        self.source_key = key
-        self.selected_key = ""
-        self.tier_filter = "all"
-        self.type_filter = []
+        return ds.files
 
     @rx.event
     def reload(self):
@@ -715,5 +699,4 @@ class AppState(rx.State):
         df = analytics.sort_queue(self._filtered(), self.sort_key, self.sort_desc).copy()
         for col in ("alert_reasons", "quality_flags"):
             df[col] = df[col].map(lambda v: "; ".join(v))
-        prefix = "SYNTHETIC_" if ds.synthetic else ""
-        return rx.download(data=df.to_csv(index=False), filename=f"{prefix}encounter_queue.csv")
+        return rx.download(data=df.to_csv(index=False), filename="encounter_queue.csv")

@@ -18,10 +18,10 @@ It installs everything, trains, predicts and opens the dashboard:
 2. **Runs the test suite.**
 3. **Builds the frozen event split** by executing the EDA notebook headlessly.
 4. **Trains the final-tier model** (5-fold cross-validation, selection, one-time holdout evaluation).
-5. **Calibrates the tier probabilities.**
+5. **Calibrates the tier probabilities** and fits the final-Pc forecast shown in the dashboard.
 6. **Trains the per-message Pc model** and scores every test message.
 7. **Writes the submission file** and the dashboard data.
-8. **Starts the dashboard** on http://localhost:3000. In the top bar, choose **Real model outputs (outputs/)** and press reload.
+8. **Starts the dashboard** on http://localhost:3000, which loads the model outputs automatically.
 
 A full run takes about 10 minutes on a laptop, plus 1–2 minutes for the dashboard's first build. Options:
 
@@ -71,10 +71,11 @@ train_data.csv ──► EDA notebook ──► frozen 70/15/15 event split (see
 - **Why forecast distance:** 831 of 834 Critical training events are Critical because of miss distance, not Pc.
 - **Decision rule:** Critical when the forecast final distance is ≤ 1.31 km, Elevated when ≤ 5.16 km. These thresholds are tuned for recall (F2), because missing a dangerous event costs more than a false alarm. The latest message's distance tier acts as a floor.
 - **Probabilities:** a multinomial logistic calibrator on the model's forecast and latest-message terms. The flag and the probability answer different questions: an event can be flagged Critical with P(Critical) below 0.5.
+- **Final Pc (dashboard context):** a separate regressor forecasts each event's final Pc. It never changes the tier, and it is weak by necessity: only about 1% of events end with Pc ≥ 1e-6. See [final_pc_report.md](reports/final_pc_report.md).
 - **Validation:** 5-fold event-grouped cross-validation for every choice, then one holdout evaluation. Every result is compared with the persistence baseline (the current tier carried forward), which was hard to beat in the ESA Kelvins challenge too.
 - **Inputs:** only the permitted telemetry columns. Test `risk` is never read.
 
-[reports/model_development.md](reports/model_development.md) explains the final system in Part A (including how the probability layer sits on top of the frozen tier model) and the full iteration story in Part B. [reports/README.md](reports/README.md) lists every report and the command that generates it. Demo scripts: [dashboard/DEMO_SCRIPT.md](dashboard/DEMO_SCRIPT.md) (Reflex, main) and [ui/DEMO_SCRIPT.md](ui/DEMO_SCRIPT.md) (Streamlit fallback).
+[reports/model_development.md](reports/model_development.md) explains the final system in Part A (including how the probability layer sits on top of the frozen tier model) and the full iteration story in Part B. [reports/README.md](reports/README.md) lists every report and the command that generates it. Demo script: [dashboard/DEMO_SCRIPT.md](dashboard/DEMO_SCRIPT.md).
 
 ## Interpretation
 
@@ -100,6 +101,7 @@ python -m unittest discover -s tests
 python scripts/run_eda.py                        # frozen event split (executes the EDA notebook)
 python scripts/train_final_tier.py --finalize    # final-tier CV + selection; holdout once, then reused
 python scripts/train_tier_probability.py --holdout   # tier probabilities; holdout once, then reused
+python scripts/train_final_pc.py --holdout       # final-Pc forecast for the dashboard; holdout once, then reused
 python scripts/train_row_model.py                # per-message Pc model on train+validation events
 python scripts/predict.py                        # per-message test predictions
 python scripts/make_submission.py                # submission/submission.csv
@@ -141,6 +143,7 @@ The Reflex dashboard in `dashboard/` reads `outputs/event_predictions.csv` and `
 ```bash
 # 1. From the repository root: export predictions (about 5 s; checked with the dashboard's own loader)
 python scripts/train_tier_probability.py   # only needed once, or after retraining (fits tier probabilities)
+python scripts/train_final_pc.py           # only needed once, or after retraining (final-Pc forecast)
 python scripts/export_dashboard_outputs.py
 
 # 2. Start the dashboard (first run installs JavaScript dependencies, 1-2 minutes)
@@ -150,14 +153,15 @@ reflex run --env prod --single-port     # with the repository .venv active (./ru
 
 `./run_all.sh` does all of this in one go.
 
-Open http://localhost:3000, choose **Real model outputs (outputs/)** in the top-bar data selector and press reload. If you retrain a model, rerun step 1 and reload.
+Open http://localhost:3000; the model outputs load automatically (there are no synthetic demo datasets). If you retrain a model, rerun step 1 and press reload in the top bar.
 
 What the export contains:
 
 - **Test events** (`source=test`, 2,167): the final-tier prediction and forecast final miss distance at the cutoff CDM (latest message >= 2 days out), the observed-distance tier at that CDM, reasons, quality flags and full CDM history. Test `risk` is never read, so observed Pc is empty.
 - **Held-out training events** (`source=train`, `split=holdout`, 1,800): the same predictions, out of sample for both models, plus observed risk history and actual final outcomes. These drive the Model Validation page, which reproduces the holdout result (108 of 118 Critical events caught, 41 false alarms).
 - **Tier probabilities:** `p_safe`, `p_elevated`, `p_critical` from the calibrated probability layer, which drive the dashboard's reliability panel.
-- **Not supplied:** predicted final Pc. The final-tier model forecasts tier and miss distance, not Pc, so that field shows "not provided" (one expected loader warning).
+- **Forecast final Pc:** from the separate final-Pc forecast (`src/final_pc.py`), shown as plain odds ("1 in 2.1M", "< 1 in 10M"). It is context and never changes the tier.
+- **Readable numbers:** collision probabilities are shown as odds rather than scientific notation; tier probabilities read "<1%" / ">99%" at the extremes.
 - **Alert thresholds:** the model flags Critical when the forecast final distance is <= 1.31 km (tuned for recall), and the latest message's distance tier is a floor. The encounter page's threshold check may report that a Critical tier is "not reproduced" from the 1 km rule; each event's reasons state the tuned thresholds and the floor.
 
 ## Risk rules and dashboard data

@@ -34,6 +34,18 @@ class DashboardExportTests(unittest.TestCase):
         self.assertEqual(int(hist.used_for_prediction.sum()), 40)      # the two >= 2-day CDMs per event
         self.assertEqual(contract.check_links(ev, hist), [])
 
+    def test_final_pc_forecast_fills_contract_fields(self):
+        from src.final_pc import FLOOR, fit, spec
+        x = self.x
+        f = event_features(x).assign(final_risk=np.linspace(-30, -3, 20))
+        s = dict(spec(event_features(x)), params={'max_iter': 5, 'min_samples_leaf': 2})
+        with threadpool_limits(limits=1):
+            bundle = {'pipeline': fit(f, s['columns'], s)}
+        events, _ = export_tables(x.drop(columns='risk'), self.row, self.tier, 'test', 'test', final_pc_bundle=bundle)
+        ev, report = contract.validate_events(events)
+        self.assertTrue(ev.predicted_final_log10_pc.between(FLOOR, 0).all())
+        self.assertFalse(any('no predicted Pc' in w for w in report.warnings))
+
     def test_holdout_export_carries_outcomes_and_rejects_leaks(self):
         events, _ = export_tables(self.x.drop(columns='risk'), self.row, self.tier, 'train', 'holdout',
                                   observed_risk=self.x.risk, labels=final_labels(self.x))

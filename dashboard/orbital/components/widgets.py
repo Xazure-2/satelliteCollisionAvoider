@@ -201,8 +201,6 @@ def error_block() -> rx.Component:
         rx.el.p(AppState.error_detail, class_name="oi-note"),
         rx.el.div(
             rx.el.button(rx.icon("refresh-cw", size=14), "Reload", class_name="oi-btn", on_click=AppState.reload),
-            rx.el.button(rx.icon("flask-conical", size=14), "Show synthetic demo A instead", class_name="oi-btn ghost",
-                         on_click=AppState.set_source("synthetic_a")),
             style={"display": "flex", "gap": "10px", "margin_top": "10px"},
         ),
         class_name="oi-error",

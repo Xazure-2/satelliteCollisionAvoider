@@ -1,4 +1,4 @@
-"""SYNTHETIC encounter data in the proposed v2 contract, for demos and tests.
+"""SYNTHETIC encounter data in the v2 contract, used ONLY by the unit tests (the dashboard shows real outputs).
 
 Everything here is invented. Rows carry source="synthetic" and a
 model_version starting with "SYNTHETIC-", so they can never pass for real
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .contract import LOG10_PC_FLOOR
+from orbital.data.contract import LOG10_PC_FLOOR
 
 OBJECT_TYPES = ["DEBRIS", "PAYLOAD", "ROCKET BODY", "UNKNOWN"]
 OBJECT_WEIGHTS = [0.55, 0.2, 0.15, 0.1]
