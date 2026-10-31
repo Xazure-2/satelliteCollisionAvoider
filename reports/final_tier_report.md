@@ -2,7 +2,7 @@
 
 **Task (organizer clarification):** predict each event's final tier, from its last message before closest approach, using only messages with `time_to_tca >= 2` days. Tiers follow the brief: Critical if risk >= -4 or miss distance < 1,000 m; Elevated if not Critical and (risk >= -6 or miss distance <= 5,000 m); otherwise Safe. `risk = -30` is a placeholder for Pc ~ 0.
 
-**Selected: HR1_distance_change_regressor**, model version `final-tier-3174ed26e83b`. On forecast events in CV: Critical recall 0.883 (persistence 0.813), precision 0.698 (0.796), F2 0.839 (0.810); missed Critical events 60 vs 96.
+**Selected: HR1_distance_change_regressor**, model version `final-tier-d7496dd831de`. On forecast events in CV: Critical recall 0.883 (persistence 0.813), precision 0.698 (0.796), F2 0.839 (0.810); missed Critical events 60 vs 96.
 
 ## Data
 
@@ -87,9 +87,34 @@ Elevated                145      1113       178
 Critical                 13        47       454
 ```
 
-## Holdout result
+## Holdout result (evaluated once)
 
-Not opened yet. Run `python scripts/train_final_tier.py --finalize` once the selection is frozen.
+Forecast events (final message inside 2 days): 1334 events, 76 Critical. 95% event-bootstrap intervals in brackets. All holdout events: selected Critical F2 0.870, persistence 0.860.
+
+| model | Critical recall | Critical precision | Critical F2 | macro-F1 |
+| --- | --- | --- | --- | --- |
+| HR1_distance_change_regressor | 0.882 [0.806–0.949] | 0.677 [0.580–0.768] | 0.831 [0.762–0.890] | 0.847 [0.815–0.879] |
+| P0 persistence | 0.789 [0.700–0.883] | 0.811 [0.719–0.900] | 0.794 [0.716–0.870] | 0.870 [0.839–0.899] |
+
+Selected model confusion matrix:
+
+```text
+truth \ predicted      Safe  Elevated  Critical
+Safe                    979        27         4
+Elevated                 29       191        28
+Critical                  1         8        67
+```
+
+Persistence confusion matrix:
+
+```text
+truth \ predicted      Safe  Elevated  Critical
+Safe                    986        21         3
+Elevated                 32       205        11
+Critical                  1        15        60
+```
+
+The holdout events were never used for EDA, feature design or selection in this task. Their row-level labels were scored once for the earlier M3 row-level model; that result did not inform this experiment.
 
 ## Test demo predictions
 
