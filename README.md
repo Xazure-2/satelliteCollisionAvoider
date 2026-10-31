@@ -79,6 +79,28 @@ table = prediction_frame(telemetry_frame, load_row_model())   # needs event_id; 
 
 **Caveat:** the row model is tuned for recall, as the brief's F2 metric favours. In cross-validation it catches 98% of messages that are truly Elevated-or-worse by Pc, but only about 29% of its Elevated-by-Pc flags are correct. Use the final-tier model to prioritize events, and per-message Pc for context. Neither output is a calibrated probability of an observed collision.
 
+## Risk rules and dashboard data
+
+`src/risk.py` holds the brief's rules as pure functions: `assess(log_pc, miss_distance_m)` returns the tier, which trigger fired (Pc and/or distance), readable reasons such as "Miss distance 0.72 km is below 1 km", and a recommended action. Unusable inputs give `needs_review`, never safe, unless a valid input already proves Critical. `score_rows` builds the per-message table, converting units once (days → hours, metres → km).
+
+`src/events.py` turns messages into event views:
+
+- `snapshot(scored, cutoff_days=0)`: newest pre-TCA message per event. A positive cutoff replays what was known that many days before each closest approach.
+- `event_table(...)`: one row per event with the current tier (latest message), the final-tier forecast, and the **priority tier**. While the latest message is 2+ days out, the forecast can raise priority, never lower it; once newer messages exist, they supersede the forecast (still shown, marked superseded).
+- `window_counts(events, window_days=1)`: unique events with closest approach within the window, with Critical split by distance vs Pc and the number of forecast upgrades.
+- `action_queue(events)`: Critical → needs review → Elevated → Safe, then soonest closest approach, then highest estimated Pc.
+- `insights(events, scored)`: deterministic sentences (tier counts, window summary, upgrades, highest Pc, closest approach, critical events by object type, largest Pc rise).
+- `build_tables(messages, row_bundle, tier_bundle, ...)`: runs everything; any `risk` column is ignored.
+
+```bash
+python scripts/build_dashboard_data.py                  # outputs/dashboard/{test,train_replay}_{rows,events}.csv + _summary.json
+python scripts/build_dashboard_data.py --cutoff-days 2 --out outputs/dashboard_cutoff2   # replay "2 days before TCA"
+```
+
+- **`test`**: all test events. The 24-hour window is honestly empty (every test message is 2+ days out); the queue is driven by the final-tier forecasts.
+- **`train_replay`**: holdout events only, so both models are out of sample, with observed outcomes in separate `observed_*` columns for comparison. At cutoff 0 the window shows events whose latest message is within a day of closest approach; at cutoff 2 it shows the forecasts as they stood 2 days out.
+- List columns (`reasons`, `alert_reasons`, `quality_flags`) are JSON strings in the CSVs.
+
 ## Notebooks
 
 `notebooks/02_modeling.ipynb` documents the historical M3 experiment (dummy baselines, median-imputed and native-missing HGB, derived features, ablation without `max_risk_estimate`). Its findings are superseded by the reports above; keep it for the audit trail.
