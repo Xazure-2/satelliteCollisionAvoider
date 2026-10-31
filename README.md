@@ -34,6 +34,17 @@ The notebook usually takes about 1–3 minutes on a laptop, with some extra time
 
 The supplied test messages are more than two days before closest approach; their next-24-hour view is therefore empty. Relative positions describe updated encounter geometry at TCA, not complete satellite trajectories. The project follows the hackathon's thresholds and does not claim operational certification.
 
+## Final-tier task (organizer clarification)
+
+The scored task is each event's **final tier** (from its last message before closest approach), predicted only from messages with `time_to_tca >= 2` days. Put `challenge-1-event-labels.xlsx` in `data/`; labels are recomputed from `train_data.csv` and checked against it.
+
+```bash
+python scripts/train_final_tier.py             # grouped CV, selection, test event predictions
+python scripts/train_final_tier.py --finalize  # evaluate the holdout once (ledger-guarded)
+```
+
+Read [reports/final_tier_report.md](reports/final_tier_report.md). Outputs: `outputs/test_event_predictions.csv` (one row per test event, tier probabilities, decision, persistence tier). The row-level models below remain for per-message estimated Pc in the dashboard.
+
 ## Modeling experiment
 
 Open [notebooks/02_modeling.ipynb](notebooks/02_modeling.ipynb) for the experiment, comparison plots, and selected-model diagnostics. The implementation fits two dummy baselines, median-imputed HGB, native-missing-value HGB, and a derived-feature variant, followed by an ablation without `max_risk_estimate`. It reuses the EDA event split and selects on validation only.
@@ -67,4 +78,4 @@ model = load_bundle()
 raw_log_risk = predict_log10_pc(telemetry_frame, model)
 ```
 
-Calling `predict_log10_pc(frame)` alone loads the selected artifact automatically. Both forms preserve row order, ignore labels and extra columns, and accept unseen categories and missing optional inputs. Invalid required telemetry raises a clear error instead of producing a misleading safe result. This model estimates supplied risk labels; its Pc output is not a calibrated probability of observed collisions.
+Calling `predict_log10_pc(frame)` alone loads the selected artifact automatically. Both forms preserve row order, ignore labels and extra columns, and accept unseen categories and missing optional inputs. `predict_log10_pc` raises a clear error on invalid required telemetry. `prediction_frame` (exports and dashboard) instead scores row by row: invalid rows get no estimate, a `needs_review` tier (or `critical` when a valid miss distance is below 1 km), and quality flags, so one bad message never blocks the batch or defaults to safe. Placeholder sigmas (10 Earth radii, 63,781,361–63,781,363 m) are flagged `*_placeholder`. This model estimates supplied risk labels; its Pc output is not a calibrated probability of observed collisions.
