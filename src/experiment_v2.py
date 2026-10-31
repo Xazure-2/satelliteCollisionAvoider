@@ -10,84 +10,16 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import average_precision_score
 from sklearn.model_selection import StratifiedGroupKFold
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
 from threadpoolctl import threadpool_limits
 
 from src.experiment import load_partitioned_data, write_json
-from src.model import ROOT, PARAMETERS, clean_features
+from src.model import ROOT, PARAMETERS, SIGMA_PLACEHOLDER_M, make_physics_pipeline
 
-# Placeholder "no covariance" sigma: 10 x Earth's equatorial radius (6,378,136.3 m).
-# The files contain both 63,781,363 and 63,781,361, so match with a small tolerance.
-SIGMA_PLACEHOLDER_M = 10 * 6378136.3
-SIGMA_PLACEHOLDER_TOLERANCE_M = 10.0
 CRITICAL, ELEVATED = -4.0, -6.0
 HEADLINE_HORIZON_DAYS = 2.0
 FOLDS = 5
-
-
-def is_sigma_placeholder(values):
-    return np.isclose(np.asarray(values, dtype=float), SIGMA_PLACEHOLDER_M, rtol=0, atol=SIGMA_PLACEHOLDER_TOLERANCE_M)
-
-
-class PhysicsFeatures(TransformerMixin, BaseEstimator):
-    """Allowed telemetry plus geometry/uncertainty features; IDs and labels never become predictors.
-
-    event_id, when present, is used only to forward-fill daily space weather from the same
-    event's earlier messages (larger time_to_tca); it is dropped before modelling.
-    """
-
-    def __init__(self, physics=True):
-        self.physics = physics
-
-    def fit(self, X, y=None):
-        self.transform(X)
-        return self
-
-    def transform(self, X):
-        out = clean_features(X)
-        if 'event_id' in X:
-            order = np.lexsort((-X.time_to_tca.to_numpy(), X.event_id.to_numpy()))
-            filled = out[['F10', 'AP']].iloc[order].groupby(X.event_id.to_numpy()[order]).ffill()
-            out[['F10', 'AP']] = filled.reindex(out.index)
-        for side in ['c', 't']:
-            col = f'{side}_sigma_r'
-            placeholder = is_sigma_placeholder(out[col])
-            out[f'{side}_sigma_placeholder'] = placeholder.astype(float)
-            out[col] = out[col].mask(placeholder)
-        if self.physics:
-            d = out.miss_distance
-            sigma = np.hypot(out.c_sigma_r, out.t_sigma_r)
-            sigma = sigma.where(sigma.gt(0))
-            out['combined_radial_sigma'] = sigma
-            out['miss_over_sigma'] = d / sigma
-            out['radial_over_sigma'] = out.relative_position_r.abs() / sigma
-            out['radial_fraction'] = out.relative_position_r.abs() / d.where(d.gt(0))
-            # Alfano-style maximum Pc ~ R^2 / (e d^2); this backs out an implied log10(R^2) object-size proxy.
-            out['log10_hbr2_proxy'] = out.max_risk_estimate + np.log10(np.e * d.where(d.gt(0)) ** 2)
-        return out
-
-
-def numeric_columns(physics):
-    base = ['time_to_tca', 'miss_distance', 'relative_speed', 'relative_position_r', 'relative_position_t',
-            'relative_position_n', 'c_sigma_r', 't_sigma_r', 'max_risk_estimate', 'F10', 'AP',
-            'c_sigma_placeholder', 't_sigma_placeholder']
-    return base + (['combined_radial_sigma', 'miss_over_sigma', 'radial_over_sigma', 'radial_fraction',
-                    'log10_hbr2_proxy'] if physics else [])
-
-
-def make_v2_pipeline(physics=True):
-    preprocessing = ColumnTransformer([
-        ('numeric', 'passthrough', numeric_columns(physics)),
-        ('category', OneHotEncoder(handle_unknown='ignore', sparse_output=False), ['c_object_type']),
-    ], remainder='drop', sparse_threshold=0)
-    return Pipeline([('features', PhysicsFeatures(physics)), ('preprocess', preprocessing),
-                     ('regressor', HistGradientBoostingRegressor(**PARAMETERS))])
 
 
 # target: 'raw' log10(Pc); 'floor' = max(risk, floor); 'gap' = max_risk_estimate - max(risk, floor) >= 0.
@@ -163,7 +95,7 @@ def run(root=ROOT, folds=FOLDS):
         prediction = np.empty(len(pool))
         for k in range(folds):
             fit, held = fold_of != k, fold_of == k
-            pipeline = make_v2_pipeline(config['physics'])
+            pipeline = make_physics_pipeline(config['physics'])
             with threadpool_limits(limits=4):
                 pipeline.fit(pool.loc[fit], training_target(pool.loc[fit], config))
                 prediction[held] = to_log_pc(pool.loc[held], pipeline.predict(pool.loc[held]), config)

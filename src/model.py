@@ -23,6 +23,14 @@ PARAMETERS = dict(loss='squared_error', learning_rate=0.05, max_iter=300,
                   max_leaf_nodes=31, min_samples_leaf=20, l2_regularization=1.0,
                   early_stopping=False, random_state=42)
 TIERS = ['safe', 'elevated', 'critical', 'needs_review']
+# Placeholder "no covariance" sigma: 10 x Earth's equatorial radius (6,378,136.3 m).
+# The files contain both 63,781,363 and 63,781,361, so match with a small tolerance.
+SIGMA_PLACEHOLDER_M = 10 * 6378136.3
+SIGMA_PLACEHOLDER_TOLERANCE_M = 10.0
+
+
+def is_sigma_placeholder(values):
+    return np.isclose(np.asarray(values, dtype=float), SIGMA_PLACEHOLDER_M, rtol=0, atol=SIGMA_PLACEHOLDER_TOLERANCE_M)
 
 
 def numeric_names(use_max_risk=True, derived=False):
@@ -34,7 +42,23 @@ def numeric_names(use_max_risk=True, derived=False):
     return names
 
 
-def clean_features(frame, use_max_risk=True):
+def invalid_required(frame, use_max_risk=True):
+    """Per-row reasons for unusable required telemetry; such rows are scored needs_review, never safe."""
+    reasons = [[] for _ in range(len(frame))]
+    for col in [c for c in FEATURES if c not in OPTIONAL and (use_max_risk or c != 'max_risk_estimate')]:
+        if col not in frame:
+            continue
+        values = pd.to_numeric(frame[col], errors='coerce').astype(float)
+        bad = ~np.isfinite(values)
+        if col in NONNEGATIVE:
+            bad |= values.lt(0)
+        for i in np.flatnonzero(bad.to_numpy()):
+            reasons[i].append(f'{col}_missing_or_invalid')
+    return reasons
+
+
+def clean_features(frame, use_max_risk=True, strict=True):
+    """Coerce permitted telemetry. strict=True raises on invalid required values; otherwise they become NaN."""
     if not isinstance(frame, pd.DataFrame):
         raise TypeError('Pass a pandas DataFrame with named telemetry columns.')
     columns = [c for c in FEATURES if use_max_risk or c != 'max_risk_estimate']
@@ -47,7 +71,7 @@ def clean_features(frame, use_max_risk=True):
         bad = ~np.isfinite(values)
         if col in NONNEGATIVE:
             bad |= values.lt(0)
-        if col not in OPTIONAL and bad.any():
+        if strict and col not in OPTIONAL and bad.any():
             raise ValueError(f'{col}: {int(bad.sum())} missing/invalid values; review these rows.')
         out[col] = values.mask(bad)
     out['c_object_type'] = out.c_object_type.fillna('__MISSING__').astype(str)
@@ -92,15 +116,73 @@ def make_pipeline(imputation='median', derived=False, use_max_risk=True, dummy=N
                      ('preprocess', preprocessing), ('regressor', estimator)])
 
 
+class PhysicsFeatures(TransformerMixin, BaseEstimator):
+    """Experiment-v2 features: allowed telemetry plus geometry/uncertainty terms; IDs and labels never become predictors.
+
+    Placeholder sigmas become missing with flags. event_id, when present, is used only to
+    forward-fill daily space weather from the same event's earlier messages (larger time_to_tca).
+    """
+
+    def __init__(self, physics=True):
+        self.physics = physics
+
+    def fit(self, X, y=None):
+        self.transform(X)
+        return self
+
+    def transform(self, X):
+        out = clean_features(X)
+        if 'event_id' in X:
+            ids = X.event_id.to_numpy()
+            order = np.lexsort((-X.time_to_tca.to_numpy(dtype=float), ids))
+            filled = pd.DataFrame(out[['F10', 'AP']].to_numpy()[order]).groupby(ids[order]).ffill().to_numpy()
+            weather = np.empty_like(filled)
+            weather[order] = filled
+            out[['F10', 'AP']] = weather
+        for side in ['c', 't']:
+            col = f'{side}_sigma_r'
+            placeholder = is_sigma_placeholder(out[col])
+            out[f'{side}_sigma_placeholder'] = placeholder.astype(float)
+            out[col] = out[col].mask(placeholder)
+        if self.physics:
+            d = out.miss_distance
+            sigma = np.hypot(out.c_sigma_r, out.t_sigma_r)
+            sigma = sigma.where(sigma.gt(0))
+            out['combined_radial_sigma'] = sigma
+            out['miss_over_sigma'] = d / sigma
+            out['radial_over_sigma'] = out.relative_position_r.abs() / sigma
+            out['radial_fraction'] = out.relative_position_r.abs() / d.where(d.gt(0))
+            # Alfano-style maximum Pc ~ R^2 / (e d^2); this backs out an implied log10(R^2) object-size proxy.
+            out['log10_hbr2_proxy'] = out.max_risk_estimate + np.log10(np.e * d.where(d.gt(0)) ** 2)
+        return out
+
+
+def physics_numeric_columns(physics=True):
+    base = ['time_to_tca', 'miss_distance', 'relative_speed', 'relative_position_r', 'relative_position_t',
+            'relative_position_n', 'c_sigma_r', 't_sigma_r', 'max_risk_estimate', 'F10', 'AP',
+            'c_sigma_placeholder', 't_sigma_placeholder']
+    return base + (['combined_radial_sigma', 'miss_over_sigma', 'radial_over_sigma', 'radial_fraction',
+                    'log10_hbr2_proxy'] if physics else [])
+
+
+def make_physics_pipeline(physics=True, parameters=None):
+    preprocessing = ColumnTransformer([
+        ('numeric', 'passthrough', physics_numeric_columns(physics)),
+        ('category', OneHotEncoder(handle_unknown='ignore', sparse_output=False), ['c_object_type']),
+    ], remainder='drop', sparse_threshold=0)
+    return Pipeline([('features', PhysicsFeatures(physics)), ('preprocess', preprocessing),
+                     ('regressor', HistGradientBoostingRegressor(**(parameters or PARAMETERS)))])
+
+
 def pc_tier(log_pc):
     values = np.asarray(log_pc, dtype=float)
-    return np.select([~np.isfinite(values), values >= -4, values >= -6],
+    return np.select([~np.isfinite(values) | (values > 0), values >= -4, values >= -6],
                      ['needs_review', 'critical', 'elevated'], default='safe')
 
 
 def risk_tier(log_pc, distance):
     p, d = np.asarray(log_pc, dtype=float), np.asarray(distance, dtype=float)
-    vp, vd = np.isfinite(p), np.isfinite(d) & (d >= 0)
+    vp, vd = np.isfinite(p) & (p <= 0), np.isfinite(d) & (d >= 0)
     return np.select([(vp & (p >= -4)) | (vd & (d < 1000)),
                       vp & vd & ((p >= -6) | (d <= 5000)), vp & vd],
                      ['critical', 'elevated', 'safe'], default='needs_review')
@@ -126,7 +208,7 @@ def predict_log10_pc(frame, model=None):
     if isinstance(pipeline, dict):
         pipeline = pipeline['pipeline']
     if frame.empty:
-        clean_features(frame, pipeline.named_steps['features'].use_max_risk)
+        clean_features(frame, getattr(pipeline.named_steps['features'], 'use_max_risk', True))
         return np.empty(0, dtype=float)
     result = np.asarray(pipeline.predict(frame), dtype=float)
     if result.shape != (len(frame),) or not np.isfinite(result).all():
@@ -135,34 +217,44 @@ def predict_log10_pc(frame, model=None):
 
 
 def prediction_frame(frame, bundle, source='test'):
-    raw = predict_log10_pc(frame, bundle)
-    clipped = np.clip(raw, -30, 0)
+    """Export table; rows with invalid required telemetry get NaN estimates and needs_review (or critical by distance)."""
     if 'event_id' not in frame or frame.event_id.isna().any():
         raise ValueError('Exports require a nonmissing event_id for every row.')
-    prepared = clean_features(frame)
-    flags = [[] for _ in range(len(frame))]
-    for col in NUMERIC:
+    invalid = invalid_required(frame)
+    valid = np.array([not r for r in invalid], dtype=bool)
+    raw = np.full(len(frame), np.nan)
+    if valid.any():
+        raw[valid] = predict_log10_pc(frame.loc[valid], bundle)
+    clipped = np.clip(raw, -30, 0)
+    prepared = clean_features(frame, strict=False)
+    flags = [list(r) for r in invalid]
+    for col in [c for c in NUMERIC if c in OPTIONAL]:
         for i in np.flatnonzero(prepared[col].isna()):
             flags[i].append(f'{col}_missing_or_invalid')
     for col in ['c_sigma_r', 't_sigma_r']:
-        for i in np.flatnonzero(prepared[col].gt(1e6)):
+        placeholder = is_sigma_placeholder(prepared[col])
+        for i in np.flatnonzero(placeholder):
+            flags[i].append(f'{col}_placeholder')
+        for i in np.flatnonzero(prepared[col].gt(1e6) & ~placeholder):
             flags[i].append(f'{col}_extreme')
     categories = bundle['pipeline'].named_steps['preprocess'].named_transformers_['category'].categories_[0]
     for i in np.flatnonzero(~prepared.c_object_type.isin(categories)):
         flags[i].append('unseen_object_type')
     for i in np.flatnonzero(prepared.c_object_type.eq('__MISSING__')):
         flags[i].append('missing_object_type')
-    for i in np.flatnonzero(raw != clipped):
+    was_clipped = np.isfinite(raw) & (raw != clipped)
+    for i in np.flatnonzero(was_clipped):
         flags[i].append('prediction_clipped')
     import json
+    distance = prepared.miss_distance.to_numpy()
     return pd.DataFrame({
         'source': source, 'row_id': frame['row_id'].to_numpy() if 'row_id' in frame else np.arange(len(frame)),
         'event_id': frame.event_id.to_numpy(), 'predicted_log10_pc_raw': raw,
         'predicted_log10_pc': clipped, 'predicted_pc': 10.0 ** clipped,
-        'prediction_clipped': raw != clipped,
-        'pc_tier': pc_tier(clipped), 'risk_tier': risk_tier(clipped, prepared.miss_distance),
-        'miss_distance_m': frame.miss_distance.to_numpy(), 'miss_distance_km': frame.miss_distance.to_numpy() / 1000,
-        'time_to_tca_days': frame.time_to_tca.to_numpy(), 'tca_hours': frame.time_to_tca.to_numpy() * 24,
+        'prediction_clipped': was_clipped,
+        'pc_tier': pc_tier(clipped), 'risk_tier': risk_tier(clipped, distance),
+        'miss_distance_m': distance, 'miss_distance_km': distance / 1000,
+        'time_to_tca_days': prepared.time_to_tca.to_numpy(), 'tca_hours': prepared.time_to_tca.to_numpy() * 24,
         'c_object_type': prepared.c_object_type.to_numpy(),
         'quality_flags': [json.dumps(f) for f in flags], 'model_version': bundle['metadata']['model_version'],
     })
