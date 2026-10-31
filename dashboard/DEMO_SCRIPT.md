@@ -41,16 +41,20 @@ Click the **Predicted critical** card. The queue filters immediately.
 
 Point at the **Escalations** count and the **2–3 d / 3–5 d / 5–7 d** windows.
 
-### 0:55–1:45 · One encounter, end to end (Encounter Analysis)
+### 0:55–1:45 · Investigate one encounter (Encounter Analysis)
 
-Click the escalation row.
+Click the escalation row. Walk down the **right panel**, which answers the operator's five questions in order:
 
-- **Left and right panels:** current observed versus predicted final, kept in separate fields and never mixed.
-- **Countdown:** T− in days and hours, measured from the last eligible message. It isn't a live clock, because the data has no clock times.
-- **Risk evolution:** observations before the dashed **2-day cutoff** are the model's inputs; the star is the prediction.
-- **R/T/N plot:** relative geometry at closest approach. Say plainly: "not an orbit."
+1. **How dangerous?** Observed ELEVATED → predicted CRITICAL, with the predicted final Pc.
+2. **How soon?** The T− countdown, measured from the last eligible message. It is relative, not a live clock.
+3. **Why?** "Critical because predicted final Pc … meets the critical threshold". The threshold rows show which
+   criterion fired.
+4. **How reliable?** Taken from the model's own probability and range. Point out when the range spans a threshold.
+5. **What next?** *Refer for manoeuvre assessment*: "a specialist decides, the system does not."
 
-> "A predicted Critical tier asks a human to start manoeuvre planning. Nothing is executed automatically."
+Then rotate the **3D geometry** on the left. Say plainly: "relative to our satellite, not an orbit." Show the latest
+eligible message, and say that the cyan sphere is the predicted miss *distance* (the model gives no direction).
+Open the **Risk evolution** tab to show the 2-day cutoff and the prediction star.
 
 ### 1:45–2:20 · Credibility (Model Validation)
 

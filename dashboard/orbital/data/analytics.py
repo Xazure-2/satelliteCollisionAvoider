@@ -208,3 +208,128 @@ def validation_metrics(events: pd.DataFrame) -> dict:
         "labels_true": labels_true, "labels_pred": labels_pred, "matrix": matrix,
         "missed": missed,
     }
+
+
+# ------------------------------------------------------------------ encounter decision support
+# These helpers EXPLAIN a tier that the risk pipeline already assigned. They never
+# change it: a disagreement between the data's tier and this check is reported.
+
+PC_CRITICAL_LOG, PC_ELEVATED_LOG = -4.0, -6.0
+MISS_CRITICAL_M, MISS_ELEVATED_M = 1000.0, 5000.0
+_SEVERITY = {"none": 0, "elevated": 1, "critical": 2}
+
+
+def threshold_checks(ev: dict) -> dict:
+    """Compare the predicted final values against the published thresholds."""
+    rows = []
+    log_pc = ev.get("predicted_final_log10_pc")
+    if _finite(log_pc):
+        level = "critical" if log_pc >= PC_CRITICAL_LOG else "elevated" if log_pc >= PC_ELEVATED_LOG else "none"
+        rows.append({"criterion": "Predicted final Pc", "value": fmt_pc(log_pc, ev.get("predicted_final_at_floor", False)),
+                     "rule": "≥ 1e-4 critical · ≥ 1e-6 elevated", "level": level})
+    else:
+        rows.append({"criterion": "Predicted final Pc", "value": "not provided", "rule": "≥ 1e-4 critical · ≥ 1e-6 elevated",
+                     "level": "unknown"})
+
+    basis = ev.get("final_miss_distance_basis")
+    miss = ev.get("predicted_final_miss_distance_m")
+    label = "Predicted final miss distance" if basis == "predicted" else (
+        "Miss distance (observed at cutoff)" if basis == "observed_at_cutoff" else "Final miss distance")
+    if _finite(miss):
+        level = "critical" if miss < MISS_CRITICAL_M else "elevated" if miss <= MISS_ELEVATED_M else "none"
+        rows.append({"criterion": label, "value": fmt_m(miss), "rule": "< 1,000 m critical · ≤ 5,000 m elevated",
+                     "level": level})
+    else:
+        rows.append({"criterion": label, "value": "not provided", "rule": "< 1,000 m critical · ≤ 5,000 m elevated",
+                     "level": "unknown"})
+
+    tier = ev.get("predicted_final_tier")
+    known = [r for r in rows if r["level"] != "unknown"]
+    implied = max((r["level"] for r in known), key=_SEVERITY.get, default=None)
+    for r in rows:
+        r["triggered"] = "yes" if tier in ("critical", "elevated") and r["level"] == tier else "no"
+
+    if tier == "needs_review":
+        summary = "No tier could be predicted: the model output is missing or unusable."
+    elif tier in ("critical", "elevated"):
+        hits = [r for r in rows if r["triggered"] == "yes"]
+        summary = (f"{tier_label(tier)} because " + " and ".join(
+            f"{r['criterion'][0].lower()}{r['criterion'][1:]} {r['value']} meets the {tier} threshold" for r in hits) + ".") if hits else (
+            f"{tier_label(tier)} as supplied by the risk pipeline; the values shown do not reproduce it.")
+    else:
+        summary = "SAFE: predicted Pc is below 1e-6 and the miss distance is above 5,000 m."
+    consistent = tier == "needs_review" or not known or len(known) < 2 or (implied or "none") == (
+        "none" if tier == "safe" else tier)
+    return {"rows": rows, "summary": summary, "consistent": consistent}
+
+
+def reliability(ev: dict, used_flag_count: int = 0) -> dict:
+    """Summarise uncertainty from fields the model actually supplied. Never invents values."""
+    tier = ev.get("predicted_final_tier")
+    notes: list[str] = []
+    prob = {"critical": ev.get("p_critical"), "elevated": ev.get("p_elevated"), "safe": ev.get("p_safe")}.get(tier)
+    lo, hi = ev.get("predicted_final_log10_pc_lower"), ev.get("predicted_final_log10_pc_upper")
+    has_interval = _finite(lo) and _finite(hi)
+
+    if tier == "needs_review":
+        level = "unavailable"
+    elif _finite(prob):
+        level = "high" if prob >= 0.8 else "moderate" if prob >= 0.5 else "low"
+        notes.append(f"Model probability for the predicted tier: {prob:.0%}.")
+    elif has_interval:
+        level = "interval only"
+    else:
+        level = "not assessed"
+        notes.append("The model supplied no probability or interval for this encounter.")
+
+    crosses = []
+    if has_interval:
+        notes.append(f"Predicted Pc range {fmt_pc(lo)} – {fmt_pc(hi)}.")
+        for value, name in ((PC_CRITICAL_LOG, "1e-4"), (PC_ELEVATED_LOG, "1e-6")):
+            if lo < value <= hi:
+                crosses.append(name)
+        if crosses:
+            notes.append("The range spans the " + " and ".join(crosses) + " threshold"
+                         + ("s" if len(crosses) > 1 else "") + ", so the tier could differ.")
+            if level == "high":
+                level = "moderate"
+    flags = list(ev.get("quality_flags") or [])
+    if flags or used_flag_count:
+        notes.append(f"Data-quality flags: {len(flags)} on the prediction, {used_flag_count} on input CDMs.")
+        if level == "high":
+            level = "moderate"
+    if ev.get("predicted_final_at_floor"):
+        notes.append("Prediction is at the risk −30 floor (≈ 0 probability).")
+    return {"level": level, "notes": notes, "crosses": crosses, "probability": fmt_prob(prob) if _finite(prob) else "—"}
+
+
+NEXT_STEPS = {
+    "refer": "Refer for manoeuvre assessment",
+    "request": "Request additional data",
+    "monitor": "Continue monitoring",
+}
+
+
+def next_step(ev: dict, rel: dict) -> dict:
+    """Operator triage suggestion. Decision support only; never recommends a manoeuvre."""
+    tier = ev.get("predicted_final_tier")
+    reasons: list[str] = []
+    if tier == "critical":
+        key = "refer"
+        reasons.append("Predicted final tier is CRITICAL.")
+        reasons.append("Specialists decide whether any manoeuvre is needed; this system does not.")
+    elif tier == "needs_review":
+        key = "request"
+        reasons.append("No usable prediction; check input CDMs and model output.")
+    elif tier == "elevated":
+        key = "request"
+        reasons.append("Predicted final tier is ELEVATED; updated CDMs would firm up the assessment before TCA.")
+    else:
+        key = "monitor"
+        reasons.append("Predicted final tier is SAFE.")
+        if rel["level"] == "low" or "1e-6" in rel["crosses"] or ev.get("quality_flags"):
+            key = "request"
+            reasons.append("Low confidence, a range spanning 1e-6, or data-quality flags: verify with more data.")
+    if transition(ev.get("observed_tier"), tier) == "escalation":
+        reasons.append("Risk is predicted to rise above the currently observed tier.")
+    return {"key": key, "label": NEXT_STEPS[key], "reasons": reasons}

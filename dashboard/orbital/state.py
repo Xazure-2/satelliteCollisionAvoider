@@ -352,6 +352,13 @@ class AppState(rx.State):
             "actual_tier": (ev.get("actual_final_tier") or "none") if held else "none",
             "actual_pc": f.fmt_pc(_num(ev.get("actual_final_log10_pc"))) if held else "",
             "explanation": self._explain(ev, kind),
+            "obs_miss_basis": "latest eligible CDM",
+            "miss_tag": "PREDICTED" if basis == "predicted" else ("OBSERVED" if basis == "observed_at_cutoff" else "N/A"),
+            "miss_tag_class": "predicted" if basis == "predicted" else ("not" if basis == "observed_at_cutoff" else "observed"),
+            "event_flags": str(len(ev["quality_flags"])),
+            "used_flags": str(int(sum(1 for f in hist.loc[hist["used_for_prediction"], "quality_flags"] if f)))
+            if not hist.empty else "0",
+            "floor": "yes" if ev["predicted_final_at_floor"] else "no",
         }
 
     @staticmethod
@@ -386,10 +393,71 @@ class AppState(rx.State):
         return charts.miss_evolution(hist, ev) if ev else charts.empty("Miss distance", "Select an encounter")
 
     @rx.var
-    def rtn_figure(self) -> go.Figure:
+    def geometry_figure(self) -> go.Figure:
         _ = (self.source_key, self.data_version, self.selected_key, self.queue)
         ev, hist = self._event()
-        return charts.rtn_geometry(hist) if ev else charts.empty("R/T/N geometry", "Select an encounter", 380)
+        return charts.encounter_geometry(hist, ev) if ev else charts.empty("", "Select an encounter", 600)
+
+    # ---------------------------------------------------------------- investigation decision support
+    def _decision(self) -> tuple[dict, dict, dict] | None:
+        ev, hist = self._event()
+        if ev is None:
+            return None
+        used = hist[hist["used_for_prediction"]] if not hist.empty else hist
+        flagged = int(sum(1 for f in used["quality_flags"] if f)) if not used.empty else 0
+        rel = analytics.reliability(ev, flagged)
+        return analytics.threshold_checks(ev), rel, analytics.next_step(ev, rel)
+
+    @rx.var
+    def threshold_rows(self) -> list[dict[str, str]]:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        d = self._decision()
+        return d[0]["rows"] if d else []
+
+    @rx.var
+    def decision(self) -> dict[str, str]:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        d = self._decision()
+        if d is None:
+            return {}
+        checks, rel, step = d
+        return {"summary": checks["summary"], "consistent": "yes" if checks["consistent"] else "no",
+                "reliability": rel["level"], "probability": rel["probability"],
+                "step_key": step["key"], "step_label": step["label"]}
+
+    @rx.var
+    def reliability_notes(self) -> list[str]:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        d = self._decision()
+        return d[1]["notes"] if d else []
+
+    @rx.var
+    def next_step_reasons(self) -> list[str]:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        d = self._decision()
+        return d[2]["reasons"] if d else []
+
+    @rx.var
+    def event_position(self) -> str:
+        keys = [r["key"] for r in self.queue]
+        current = self.current_event_key
+        return f"{keys.index(current) + 1} of {len(keys)}" if current in keys else "not in current filter"
+
+    def _step_event(self, delta: int):
+        keys = [r["key"] for r in self.queue]
+        if not keys:
+            return
+        current = self.current_event_key
+        i = keys.index(current) if current in keys else -delta
+        self.selected_key = keys[(i + delta) % len(keys)]
+
+    @rx.event
+    def next_event(self):
+        self._step_event(1)
+
+    @rx.event
+    def prev_event(self):
+        self._step_event(-1)
 
     @rx.var
     def history_rows(self) -> list[dict[str, str]]:

@@ -2,7 +2,8 @@
 
 import reflex as rx
 
-from orbital.pages.analysis import encounter, reports, validation
+from orbital.pages.analysis import reports, validation
+from orbital.pages.encounter import encounter
 from orbital.pages.operations import collision_risk, global_tracking, mission_control
 
 app = rx.App(

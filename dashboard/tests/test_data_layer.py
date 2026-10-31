@@ -183,6 +183,65 @@ class Analytics(unittest.TestCase):
         self.assertEqual(analytics.transition(None, "safe"), "unknown")
 
 
+class DecisionSupport(unittest.TestCase):
+    def ev(self, **kw):
+        base = {"predicted_final_tier": "safe", "observed_tier": "safe", "predicted_final_log10_pc": -8.0,
+                "predicted_final_miss_distance_m": 9000.0, "final_miss_distance_basis": "predicted",
+                "predicted_final_at_floor": False, "quality_flags": []}
+        base.update(kw)
+        return base
+
+    def test_pc_trigger_explained(self):
+        t = analytics.threshold_checks(self.ev(predicted_final_tier="critical", predicted_final_log10_pc=-3.5))
+        self.assertEqual([r["triggered"] for r in t["rows"]], ["yes", "no"])
+        self.assertIn("CRITICAL because predicted final Pc", t["summary"])
+        self.assertTrue(t["consistent"])
+
+    def test_distance_boundaries(self):
+        crit = analytics.threshold_checks(self.ev(predicted_final_tier="critical", predicted_final_miss_distance_m=999))
+        self.assertEqual(crit["rows"][1]["level"], "critical")
+        at_1000 = analytics.threshold_checks(self.ev(predicted_final_tier="elevated", predicted_final_miss_distance_m=1000))
+        self.assertEqual(at_1000["rows"][1]["level"], "elevated")
+        at_5000 = analytics.threshold_checks(self.ev(predicted_final_tier="elevated", predicted_final_miss_distance_m=5000))
+        self.assertEqual(at_5000["rows"][1]["level"], "elevated")
+
+    def test_inconsistent_tier_is_reported_not_changed(self):
+        t = analytics.threshold_checks(self.ev(predicted_final_tier="safe", predicted_final_log10_pc=-3.0))
+        self.assertFalse(t["consistent"])
+
+    def test_missing_values_not_invented(self):
+        t = analytics.threshold_checks(self.ev(predicted_final_log10_pc=float("nan")))
+        self.assertEqual(t["rows"][0]["value"], "not provided")
+        r = analytics.reliability(self.ev())
+        self.assertEqual(r["level"], "not assessed")
+        self.assertEqual(r["probability"], "—")
+
+    def test_reliability_from_probability_and_interval(self):
+        r = analytics.reliability(self.ev(predicted_final_tier="critical", p_critical=0.9,
+                                          predicted_final_log10_pc_lower=-4.5, predicted_final_log10_pc_upper=-3.0))
+        self.assertEqual(r["crosses"], ["1e-4"])
+        self.assertEqual(r["level"], "moderate")  # high probability, but the range spans a threshold
+
+    def test_next_steps(self):
+        rel = {"level": "high", "crosses": []}
+        self.assertEqual(analytics.next_step(self.ev(predicted_final_tier="critical"), rel)["key"], "refer")
+        self.assertEqual(analytics.next_step(self.ev(predicted_final_tier="needs_review"), rel)["key"], "request")
+        self.assertEqual(analytics.next_step(self.ev(predicted_final_tier="elevated"), rel)["key"], "request")
+        self.assertEqual(analytics.next_step(self.ev(), rel)["key"], "monitor")
+        self.assertEqual(analytics.next_step(self.ev(quality_flags=["x"]), rel)["key"], "request")
+        text = " ".join(analytics.next_step(self.ev(predicted_final_tier="critical"), rel)["reasons"]).lower()
+        self.assertNotIn("perform", text)
+        self.assertIn("does not", text)
+
+    def test_every_synthetic_event_is_explainable(self):
+        for key in ("synthetic_a", "synthetic_b"):
+            ds = adapters.load(key)
+            for ev in ds.events.to_dict("records"):
+                t = analytics.threshold_checks(ev)
+                self.assertTrue(t["consistent"], (key, ev["event_id"]))
+                analytics.next_step(ev, analytics.reliability(ev))
+
+
 class GlobePopulation(unittest.TestCase):
     def test_population_is_synthetic_and_valid(self):
         objs = make_population(3000)

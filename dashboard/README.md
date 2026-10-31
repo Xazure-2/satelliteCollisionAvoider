@@ -50,7 +50,7 @@ chart units, validation maths, and globe rotate / zoom / hover / click / focus /
 | Mission Control | Clickable predicted-tier cards, early-warning windows, observed→predicted transitions, globe, priority queue |
 | Global Tracking | Full-screen interactive globe (synthetic simulation) with filters and object panel |
 | Collision Risk | Filters (tier, event ID, object type, time to TCA, population), sortable queue, CSV export, timeline |
-| Encounter Analysis | Observed vs predicted final, T− countdown, risk & miss-distance evolution with 2-day cutoff, R/T/N, CDM table |
+| Encounter Analysis | Two-panel investigation workspace: large 3D relative R/T/N geometry (left) and a decision summary (right) answering how dangerous, why, how soon, how reliable and what next; risk/miss-distance evolution, CDM history and uncertainty/data quality in tabs; previous/next navigation |
 | Model Validation | Held-out confusion matrix, accuracy, critical recall/precision, missed criticals, limitations |
 | Reports | Dataset provenance, data-quality warnings, contract summary, export |
 
@@ -74,7 +74,13 @@ dashboard/
 └── tests/                  unit tests + browser e2e
 ```
 
-* The UI never classifies risk. Tiers come from the data (the risk pipeline).
+* The UI never classifies risk. Tiers come from the data (the risk pipeline). The encounter page *explains* the
+  supplied tier by comparing the predicted values with the published thresholds, and flags any mismatch rather
+  than changing the tier (`analytics.threshold_checks`).
+* "Reliability" is derived only from uncertainty the model supplies (tier probabilities and/or a Pc interval);
+  without them it reads "not assessed". "Recommended next step" is triage guidance (continue monitoring, request
+  additional data, refer for manoeuvre assessment); it never recommends or approves a manoeuvre
+  (`analytics.reliability`, `analytics.next_step`).
 * A missing or invalid real dataset shows an error. It is **never** silently replaced with synthetic data.
 * The globe data is a separate synthetic simulation and is never linked to Airbus encounters.
 

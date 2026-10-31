@@ -85,26 +85,171 @@ await settle(page);
 const [download] = await Promise.all([page.waitForEvent("download", { timeout: 10000 }), page.click('[data-testid="export"]')]);
 check("CSV export", download.suggestedFilename().endsWith(".csv"), download.suggestedFilename());
 
-// ---------------------------------------------------------------- encounter analysis
+// ---------------------------------------------------------------- encounter analysis (investigation workspace)
+const STEPS = ["Refer for manoeuvre assessment", "Request additional data", "Continue monitoring"];
+const readEncounter = async () => ({
+  id: await text(page, '[data-testid="event-id"]'),
+  observed: await text(page, '[data-testid="side-observed"] .tier'),
+  predicted: await text(page, '[data-testid="side-predicted"] .tier'),
+  countdown: await text(page, '[data-testid="countdown"]'),
+  pc: await text(page, '[data-testid="pred-pc"]'),
+  obsMiss: await text(page, '[data-testid="obs-miss"]'),
+  predMiss: await text(page, '[data-testid="pred-miss"]'),
+  why: await text(page, '[data-testid="why-summary"]'),
+  rows: await page.locator('[data-testid="threshold-row"]').count(),
+  hits: await page.locator('[data-testid="threshold-row"] .inv-hit.on').count(),
+  reliability: await text(page, '[data-testid="reliability"]'),
+  step: await text(page, '[data-testid="next-step"]'),
+  summary: await text(page, '[data-testid="summary-panel"]'),
+});
+const geometryTraces = () => page.evaluate(() => {
+  const gd = document.querySelector('[data-testid="geometry-plot"] .js-plotly-plot');
+  return gd && gd.data ? gd.data.map((t) => t.name) : [];
+});
+const checkEncounter = (e, label) => {
+  const ok = e.id.startsWith("#") && e.countdown.startsWith("T−") && e.rows === 2 && e.why.length > 10 &&
+    STEPS.includes(e.step) && e.reliability.length > 0 &&
+    (["CRITICAL", "ELEVATED"].some((t) => e.predicted.includes(t)) ? e.hits >= 1 : e.hits === 0);
+  check(`encounter ${label}: summary complete and consistent`, ok,
+    `${e.id} ${e.observed}→${e.predicted} ${e.countdown} Pc ${e.pc} | ${e.reliability} | ${e.step}`);
+};
+
 const firstId = (await page.locator('[data-testid="queue-row"] td:nth-child(1)').first().innerText()).trim();
 await page.locator('[data-testid="queue-row"]').first().click();
 await page.waitForURL("**/encounter");
-await page.waitForSelector('[data-testid="event-id"]');
-await settle(page, 2000);
-check("row click opens encounter", (await text(page, '[data-testid="event-id"]')) === "#" + firstId, firstId);
-check("observed and predicted shown separately",
-  (await text(page, '[data-testid="side-observed"]')).includes("CURRENT OBSERVED") &&
-  (await text(page, '[data-testid="side-predicted"]')).includes("PREDICTED FINAL"));
-const plots = await page.locator(".js-plotly-plot").count();
-check("risk, miss-distance and R/T/N charts render", plots >= 3, `${plots} plots`);
-const axes = (await page.locator(".js-plotly-plot .xtitle, .js-plotly-plot .ytitle").evaluateAll(
-  (els) => els.map((e) => e.textContent))).join(" | ");
-check("chart units labelled (days, m)", axes.includes("days") && axes.includes("(m)"), axes);
-const options = await page.locator('[data-testid="event-select"] option').evaluateAll((o) => o.map((x) => x.value));
-await page.selectOption('[data-testid="event-select"]', options[3]);
+await page.waitForSelector('[data-testid="summary-panel"]');
+await settle(page, 2500);
+let enc = await readEncounter();
+check("row click opens encounter", enc.id === "#" + firstId, firstId);
+check("geometry labelled relative, not an orbit or Earth map",
+  (await text(page, '[data-testid="geometry-caveat"]')).includes("NOT AN ORBITAL TRAJECTORY OR EARTH MAP"));
+const traces = await geometryTraces();
+check("3D view highlights latest eligible CDM and primary",
+  traces.includes("Latest eligible CDM (prediction cutoff)") && traces.includes("Primary object (origin)"), traces.join(" | "));
+check("observed vs predicted miss distance distinguished",
+  enc.summary.includes("OBSERVED MISS DISTANCE") && /PREDICTED|OBSERVED/.test(enc.summary.split("FINAL MISS DISTANCE")[1] || ""));
+check("no automatic manoeuvre recommendation", !/execute|perform (a|the) manoeuvre|manoeuvre is (safe|required)/i.test(enc.summary)
+  && enc.summary.includes("does not decide whether a manoeuvre is needed"));
+checkEncounter(enc, "1");
+
+// 3D interaction: rotate, zoom, hover
+const scene = await page.locator('[data-testid="geometry-plot"] .js-plotly-plot').boundingBox();
+const eye = () => page.evaluate(() => {
+  const s = document.querySelector('[data-testid="geometry-plot"] .js-plotly-plot')._fullLayout.scene._scene;
+  const e = s.getCamera().eye; return { x: e.x, y: e.y, z: e.z, r: Math.hypot(e.x, e.y, e.z) };
+});
+const e0 = await eye();
+await page.mouse.move(scene.x + scene.width * 0.6, scene.y + scene.height * 0.5);
+await page.mouse.down();
+await page.mouse.move(scene.x + scene.width * 0.6 + 160, scene.y + scene.height * 0.5 + 30, { steps: 10 });
+await page.mouse.up();
+await settle(page, 1200);
+const e1 = await eye();
+check("3D view rotates", Math.abs(e1.x - e0.x) + Math.abs(e1.y - e0.y) > 0.2, `eye ${e0.x.toFixed(2)},${e0.y.toFixed(2)} → ${e1.x.toFixed(2)},${e1.y.toFixed(2)}`);
+await page.mouse.wheel(0, -400);
+await settle(page, 1200);
+const e2 = await eye();
+check("3D view zooms", e2.r < e1.r - 0.05, `distance ${e1.r.toFixed(2)} → ${e2.r.toFixed(2)}`);
+await page.evaluate(() => {
+  const gd = document.querySelector('[data-testid="geometry-plot"] .js-plotly-plot');
+  window.__hoverHits = [];
+  gd.on("plotly_hover", (d) => window.__hoverHits.push(d.points[0].data.name));
+});
+for (let gx = 0.25; gx <= 0.8 && !(await page.evaluate(() => window.__hoverHits.length)); gx += 0.05) {
+  for (let gy = 0.2; gy <= 0.85; gy += 0.05) {
+    await page.mouse.move(scene.x + scene.width * gx, scene.y + scene.height * gy);
+    await settle(page, 120);
+    if (await page.evaluate(() => window.__hoverHits.length)) break;
+  }
+}
+const hits = await page.evaluate(() => window.__hoverHits);
+check("hovering 3D view reports CDM / object details", hits.length > 0, hits.slice(0, 2).join(" | "));
+
+// tabs: everything still available, one at a time
+await page.click('[data-testid="tab-risk"]');
 await settle(page, 1500);
-const newId = await text(page, '[data-testid="event-id"]');
-check("selecting another event changes details", newId !== "#" + firstId, `${firstId} → ${newId}`);
+let axes = (await page.locator('[data-testid="detail-tabs"] .xtitle, [data-testid="detail-tabs"] .ytitle').evaluateAll((els) => els.map((e) => e.textContent))).join(" | ");
+check("tab: risk evolution", axes.includes("log10(Pc)") && axes.includes("days"), axes);
+await page.click('[data-testid="tab-miss"]');
+await settle(page, 1500);
+axes = (await page.locator('[data-testid="detail-tabs"] .xtitle, [data-testid="detail-tabs"] .ytitle').evaluateAll((els) => els.map((e) => e.textContent))).join(" | ");
+check("tab: miss-distance evolution (metres)", axes.includes("miss distance (m)"), axes);
+await page.click('[data-testid="tab-cdm"]');
+await settle(page, 1000);
+const cdmRows = await page.locator('[data-testid="cdm-table"] tbody tr').count();
+check("tab: CDM history", cdmRows > 0, `${cdmRows} CDMs`);
+await page.click('[data-testid="tab-quality"]');
+await settle(page, 1000);
+const quality = await page.locator('[data-testid="detail-tabs"]').innerText();
+check("tab: model uncertainty & data quality", quality.includes("MODEL OUTPUT") && quality.includes("P(critical)") &&
+  quality.includes("DATA QUALITY"));
+check("only one detail view shown at a time", (await page.locator('[data-testid="cdm-table"]').count()) === 0);
+
+// navigation across several encounters: everything updates
+const seen = new Set([enc.id]);
+let prevTrace = JSON.stringify(await page.evaluate(() => document.querySelector('[data-testid="geometry-plot"] .js-plotly-plot').data[1].x));
+for (let k = 2; k <= 5; k++) {
+  await page.click('[data-testid="next-event"]');
+  await settle(page, 2200);
+  enc = await readEncounter();
+  const tr = JSON.stringify(await page.evaluate(() => document.querySelector('[data-testid="geometry-plot"] .js-plotly-plot').data[1].x));
+  check(`next encounter ${k}: id and 3D geometry change`, !seen.has(enc.id) && tr !== prevTrace, enc.id);
+  checkEncounter(enc, String(k));
+  seen.add(enc.id);
+  prevTrace = tr;
+}
+await page.click('[data-testid="prev-event"]');
+await settle(page, 2000);
+check("previous encounter", (await text(page, '[data-testid="event-id"]')) !== enc.id);
+const options = await page.locator('[data-testid="event-select"] option').evaluateAll((o) => o.map((x) => x.value));
+await page.selectOption('[data-testid="event-select"]', options[40]);
+await settle(page, 2000);
+enc = await readEncounter();
+checkEncounter(enc, "picker");
+
+// held-out encounter shows truth only in the evaluation section
+await page.click('[data-testid="enc-scope-held"]');
+await settle(page, 2500);
+await page.click('[data-testid="tab-quality"]');
+await settle(page, 1000);
+check("held-out encounter: truth shown as evaluation only",
+  (await page.locator('[data-testid="detail-tabs"]').innerText()).includes("Held-out truth (evaluation only"));
+
+// dataset B: sparse fields and a needs-review encounter
+await page.selectOption('[data-testid="source-select"]', "synthetic_b");
+await settle(page, 2000);
+await page.click('[data-testid="nav-risk"]');
+await page.waitForSelector('[data-testid="tier-needs_review"]');
+await page.click('[data-testid="scope-test"]');
+await page.click('[data-testid="tier-safe"]');
+await settle(page, 1500);
+await page.locator('[data-testid="queue-row"]').first().click();
+await page.waitForURL("**/encounter");
+await page.waitForSelector('[data-testid="summary-panel"]');
+await settle(page, 2500);
+enc = await readEncounter();
+check("dataset B: no uncertainty → 'not assessed', nothing invented",
+  enc.reliability.toLowerCase().includes("not assessed") && enc.summary.includes("no probability or interval"), enc.reliability);
+check("dataset B: final miss distance marked as observed, not predicted",
+  enc.summary.includes("observed at cutoff (not predicted)"));
+checkEncounter(enc, "B safe");
+await page.click('[data-testid="nav-risk"]');
+await page.waitForSelector('[data-testid="tier-needs_review"]');
+await page.click('[data-testid="tier-needs_review"]');
+await settle(page, 1500);
+await page.locator('[data-testid="queue-row"]').first().click();
+await page.waitForURL("**/encounter");
+await page.waitForSelector('[data-testid="summary-panel"]');
+await settle(page, 2500);
+enc = await readEncounter();
+check("needs-review encounter: request data, prediction not invented",
+  enc.step === "Request additional data" && enc.pc === "—" && enc.reliability.toLowerCase() === "unavailable",
+  `${enc.predicted} Pc ${enc.pc} ${enc.reliability} ${enc.step}`);
+await page.click('[data-testid="nav-risk"]');
+await page.waitForSelector('[data-testid="tier-all"]');
+await page.click('[data-testid="tier-all"]');
+await page.selectOption('[data-testid="source-select"]', "synthetic_a");
+await settle(page, 2000);
 
 // ---------------------------------------------------------------- validation
 await page.click('[data-testid="nav-validation"]');

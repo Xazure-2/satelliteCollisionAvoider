@@ -1,122 +1,17 @@
-"""Encounter Analysis, Model Validation and Reports pages."""
+"""Model Validation and Reports pages."""
 
 from __future__ import annotations
 
 import reflex as rx
 
 from orbital.components.layout import shell
-from orbital.components.widgets import panel, queue_table, tier_badge
+from orbital.components.widgets import panel, queue_table
 from orbital.data import adapters
 from orbital.data.contract import EVENT_OPTIONAL, EVENT_REQUIRED, HISTORY_OPTIONAL, HISTORY_REQUIRED
 from orbital.state import AppState
 
-E = AppState.event
-
-
 def _kv(label: str, value) -> rx.Component:
     return rx.fragment(rx.el.dt(label), rx.el.dd(value))
-
-
-def _side(tag: str, tier, label, rows: list, predicted: bool) -> rx.Component:
-    return rx.el.div(
-        rx.el.div(tag, class_name="oi-side-tag"),
-        rx.el.div(tier_badge(tier, label), class_name="oi-side-tier"),
-        rx.el.dl(*[_kv(k, v) for k, v in rows], class_name="oi-kv"),
-        class_name="oi-side predicted" if predicted else "oi-side",
-        data_testid="side-predicted" if predicted else "side-observed",
-    )
-
-
-def encounter() -> rx.Component:
-    picker = rx.el.div(
-        rx.el.span("Encounter", class_name="oi-group-label"),
-        rx.el.select(
-            rx.foreach(AppState.event_options, lambda o: rx.el.option(o[1], value=o[0])),
-            value=AppState.current_event_key, on_change=AppState.select_event, class_name="oi-select",
-            data_testid="event-select",
-        ),
-        rx.el.span("Population", class_name="oi-group-label"),
-        rx.el.button("Test set", class_name=rx.cond(AppState.scope == "test", "oi-chip on", "oi-chip"),
-                     on_click=AppState.set_scope("test")),
-        rx.el.button("Held-out training", class_name=rx.cond(AppState.scope == "held_out", "oi-chip on", "oi-chip"),
-                     on_click=AppState.set_scope("held_out"), data_testid="enc-scope-held"),
-        rx.el.span("Picker follows the Collision Risk filters", class_name="oi-note"),
-        class_name="oi-toolbar",
-    )
-    summary = rx.el.div(
-        rx.el.div(
-            rx.el.div(
-                rx.el.div("EVENT", class_name="oi-side-tag"),
-                rx.el.div("#", E["event_id"], class_name="oi-countdown", data_testid="event-id"),
-                rx.el.dl(_kv("Object type", E["object_type"]), _kv("Population", E["split"]),
-                         _kv("CDMs used (≥ 2 d)", E["n_cdms"]), _kv("Relative speed", E["speed"]),
-                         _kv("Model", E["model_version"]), class_name="oi-kv", style={"margin_top": "10px"}),
-                class_name="oi-side",
-            ),
-            rx.el.div(
-                rx.el.div("TIME TO CLOSEST APPROACH", class_name="oi-side-tag"),
-                rx.el.div(E["countdown"], class_name="oi-countdown", data_testid="countdown"),
-                rx.el.div("At the last eligible CDM (", E["cutoff_days"], "). Relative time only: the data has no "
-                          "clock times, so this is not a live countdown.", class_name="oi-note", style={"margin_top": "8px"}),
-                class_name="oi-side",
-            ),
-            class_name="oi-grid-2",
-        ),
-        rx.el.div(
-            _side("CURRENT OBSERVED · last eligible CDM", E["observed_tier"], E["observed_label"],
-                  [("Observed Pc", E["obs_pc"]), ("log10(Pc)", E["obs_log"]), ("Miss distance", E["obs_miss"]),
-                   ("At time_to_tca", E["cutoff_days"])], predicted=False),
-            rx.el.div(rx.icon("move-right", size=34), class_name="oi-big-arrow"),
-            _side("PREDICTED FINAL · model output", E["predicted_tier"], E["predicted_label"],
-                  [("Predicted final Pc", E["pred_pc"]), ("log10(Pc)", E["pred_log"]),
-                   ("Final miss distance", E["pred_miss"]), ("Miss-distance basis", E["miss_basis"]),
-                   ("Uncertainty", E["uncertainty"]), ("P(critical / elevated / safe)",
-                                                       rx.el.span(E["p_crit"], " / ", E["p_elev"], " / ", E["p_safe"]))],
-                  predicted=True),
-            class_name="oi-compare",
-        ),
-        style={"display": "grid", "grid_template_columns": "minmax(0, 0.9fr) minmax(0, 1.6fr)", "gap": "16px"},
-    )
-    explanation = panel(
-        "Early-warning assessment",
-        rx.el.div(E["explanation"], class_name="oi-callout " + E["transition"].to(str), data_testid="explanation"),
-        rx.el.dl(_kv("Alert triggers (from pipeline)", E["reasons"]), _kv("Recommended review", E["action"]),
-                 _kv("Quality flags", E["flags"]), class_name="oi-kv", style={"margin_top": "12px"}),
-        rx.cond(E["actual_label"] != "",
-                rx.el.div(rx.el.b("Held-out truth (evaluation only, never a model input): "),
-                          tier_badge(E["actual_tier"], E["actual_label"]), " actual final Pc ", E["actual_pc"],
-                          class_name="oi-note", style={"margin_top": "12px"}),
-                rx.fragment()),
-    )
-
-    def cdm_row(r):
-        return rx.el.tr(*[rx.el.td(r[k], class_name="mono") for k in ("t", "log", "pc", "miss", "speed", "r", "tt", "n")],
-                        rx.el.td(r["used"]), rx.el.td(r["flags"], class_name="muted"))
-
-    cdms = panel(
-        "CDM history",
-        rx.el.div(rx.el.table(
-            rx.el.thead(rx.el.tr(*[rx.el.th(h) for h in ("time_to_tca (d)", "log10 Pc", "Pc", "miss (m)", "speed (m/s)",
-                                                         "R (m)", "T (m)", "N (m)", "role", "flags")])),
-            rx.el.tbody(rx.foreach(AppState.history_rows, cdm_row)), class_name="oi-table"),
-            class_name="oi-table-wrap", style={"max_height": "320px"}),
-        sub="observed telemetry; units: days, metres, m/s", body_class="",
-    )
-    content = rx.cond(
-        AppState.event.length() > 0,
-        rx.fragment(
-            summary,
-            explanation,
-            rx.el.div(panel("Risk evolution", rx.plotly(data=AppState.risk_figure, width="100%"), body_class=""),
-                      panel("Miss-distance evolution", rx.plotly(data=AppState.miss_figure, width="100%"), body_class=""),
-                      class_name="oi-grid-2"),
-            rx.el.div(panel("Relative-position geometry", rx.plotly(data=AppState.rtn_figure, width="100%"),
-                            sub="relative encounter geometry, not a complete orbital trajectory", body_class=""),
-                      cdms, class_name="oi-grid-2"),
-        ),
-        rx.el.div("No encounter matches the current filters.", class_name="oi-empty"),
-    )
-    return shell("/encounter", "Encounter Analysis", panel("Select encounter", picker), content)
 
 
 def validation() -> rx.Component:
