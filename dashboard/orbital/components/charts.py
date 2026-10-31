@@ -44,11 +44,12 @@ def _time_axis(fig: go.Figure, max_t: float) -> None:
                   annotation_position="top left")
 
 
-def risk_evolution(hist: pd.DataFrame, ev: dict) -> go.Figure:
-    fig = _base("Risk evolution — observed log10(Pc) vs time_to_tca", 320)
+def risk_evolution(hist: pd.DataFrame, ev: dict, height: int = 320) -> go.Figure:
+    fig = _base("Risk evolution — observed log10(Pc) vs time_to_tca", height)
+    fig.update_layout(margin=dict(l=52, r=12, t=14, b=86), legend=dict(y=-0.36, font=dict(size=10)))
     h = hist.dropna(subset=["observed_log10_pc"]).sort_values("time_to_tca_days", ascending=False)
     if h.empty and not math.isfinite(ev.get("predicted_final_log10_pc") or float("nan")):
-        return empty("", "No observed risk values or prediction available", 320)
+        return empty("", "No observed risk values or prediction available", height)
     used, after = h[h["used_for_prediction"]], h[~h["used_for_prediction"]]
     hover = "time_to_tca %{x:.2f} d<br>log10(Pc) %{y:.2f}<extra>%{fullData.name}</extra>"
     fig.add_trace(go.Scatter(x=used["time_to_tca_days"], y=used["observed_log10_pc"], name="Observed CDMs (model input, ≥ 2 d)",
@@ -83,11 +84,12 @@ def risk_evolution(hist: pd.DataFrame, ev: dict) -> go.Figure:
     return fig
 
 
-def miss_evolution(hist: pd.DataFrame, ev: dict) -> go.Figure:
-    fig = _base("Miss-distance evolution (metres) vs time_to_tca", 320)
+def miss_evolution(hist: pd.DataFrame, ev: dict, height: int = 320) -> go.Figure:
+    fig = _base("Miss-distance evolution (metres) vs time_to_tca", height)
+    fig.update_layout(margin=dict(l=58, r=12, t=14, b=86), legend=dict(y=-0.36, font=dict(size=10)))
     h = hist.dropna(subset=["miss_distance_m"]).sort_values("time_to_tca_days", ascending=False)
     if h.empty:
-        return empty("", "No miss-distance history available", 320)
+        return empty("", "No miss-distance history available", height)
     used, after = h[h["used_for_prediction"]], h[~h["used_for_prediction"]]
     hover = "time_to_tca %{x:.2f} d<br>miss %{y:,.0f} m<extra>%{fullData.name}</extra>"
     fig.add_trace(go.Scatter(x=used["time_to_tca_days"], y=used["miss_distance_m"], name="Observed (model input, ≥ 2 d)",
@@ -106,7 +108,7 @@ def miss_evolution(hist: pd.DataFrame, ev: dict) -> go.Figure:
     for y, label, color in [(1000, "1,000 m", TIER_COLORS["critical"]), (5000, "5,000 m", TIER_COLORS["elevated"])]:
         fig.add_hline(y=y, line=dict(color=color, width=1, dash="dot"), annotation=dict(text=label, font=dict(size=10, color=color)),
                       annotation_position="top left")
-    fig.update_yaxes(title="miss distance (m)", rangemode="tozero", tickformat=",")
+    fig.update_yaxes(title="miss distance (m, log scale)", type="log", tickformat="~s")
     _time_axis(fig, float(h["time_to_tca_days"].max()))
     return fig
 
@@ -118,16 +120,16 @@ def _sphere(radius_km: float, color: str, name: str, hover: str, opacity: float)
     u, v = np.meshgrid(np.linspace(0, 2 * np.pi, 36), np.linspace(0, np.pi, 18))
     return go.Surface(x=radius_km * np.cos(u) * np.sin(v), y=radius_km * np.sin(u) * np.sin(v), z=radius_km * np.cos(v),
                       colorscale=[[0, color], [1, color]], showscale=False, opacity=opacity, name=name,
-                      showlegend=True, hovertemplate=hover + "<extra></extra>", contours=dict(
+                      showlegend=True, hoverinfo="skip", contours=dict(
                           x=dict(show=True, color=color, width=1), y=dict(show=True, color=color, width=1)))
 
 
-def encounter_geometry(hist: pd.DataFrame, ev: dict) -> go.Figure:
+def encounter_geometry(hist: pd.DataFrame, ev: dict, reset: int = 0, height: int = 680) -> go.Figure:
     """Relative R/T/N geometry centred on the primary. Not an orbit and not an Earth map."""
     h = hist.dropna(subset=RTN_COLS).sort_values("time_to_tca_days", ascending=False).reset_index(drop=True)
     if h.empty:
-        return empty("", "No relative-position telemetry for this encounter", 680)
-    fig = _base("", 680)
+        return empty("", "No relative-position telemetry for this encounter", height)
+    fig = _base("", height)
     h = h.assign(n_cdm=np.arange(1, len(h) + 1), r_km=h[RTN_COLS[0]] / 1000, t_km=h[RTN_COLS[1]] / 1000,
                  n_km=h[RTN_COLS[2]] / 1000,
                  pc=[f"{10 ** v:.1e}" if np.isfinite(v) and v > -30 else ("≈ 0" if np.isfinite(v) else "—")
@@ -185,7 +187,7 @@ def encounter_geometry(hist: pd.DataFrame, ev: dict) -> go.Figure:
                    camera=dict(eye=dict(x=1.5, y=1.5, z=0.9))),
         margin=dict(l=0, r=0, t=6, b=0), legend=dict(orientation="v", x=0.0, y=0.02, yanchor="bottom",
                                                      bgcolor="rgba(4,9,20,0.7)", font=dict(size=10.5)),
-        uirevision=f"{ev.get('source')}|{ev.get('event_id')}",
+        uirevision=f"{ev.get('source')}|{ev.get('event_id')}|{reset}",
     )
     return fig
 

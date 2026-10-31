@@ -43,18 +43,18 @@ Point at the **Escalations** count and the **2–3 d / 3–5 d / 5–7 d** windo
 
 ### 0:55–1:45 · Investigate one encounter (Encounter Analysis)
 
-Click the escalation row. Walk down the **right panel**, which answers the operator's five questions in order:
+Click the escalation row. Read the **right panel** from top to bottom:
 
-1. **How dangerous?** Observed ELEVATED → predicted CRITICAL, with the predicted final Pc.
-2. **How soon?** The T− countdown, measured from the last eligible message. It is relative, not a live clock.
-3. **Why?** "Critical because predicted final Pc … meets the critical threshold". The threshold rows show which
-   criterion fired.
-4. **How reliable?** Taken from the model's own probability and range. Point out when the range spans a threshold.
-5. **What next?** *Refer for manoeuvre assessment*: "a specialist decides, the system does not."
+1. **How dangerous, and is it escalating?** CURRENT OBSERVED: ELEVATED → PREDICTED FINAL: CRITICAL, "Escalation expected".
+2. **How much time?** The T− countdown, measured from the last eligible message. It is relative, not a live clock.
+3. **Key measurements:** each card says whether it is OBSERVED or PREDICTED. In dataset B the predicted final miss
+   distance reads "Not provided", because we never invent it.
+4. **Why this tier?** The rule that fired, with the threshold rows.
+5. **Next step:** *Refer for human manoeuvre assessment*. "We suggest a review. We do not plan manoeuvres."
 
-Then rotate the **3D geometry** on the left. Say plainly: "relative to our satellite, not an orbit." Show the latest
-eligible message, and say that the cyan sphere is the predicted miss *distance* (the model gives no direction).
-Open the **Risk evolution** tab to show the 2-day cutoff and the prediction star.
+On the **left**, hover over a few CDM markers, then click one to inspect it. Say: "Each dot is a measured relative
+position. The Earth and the icons are only context." Switch to **Measured Geometry** and rotate the 3-D view to
+show the same measurements without any decoration.
 
 ### 1:45–2:20 · Credibility (Model Validation)
 

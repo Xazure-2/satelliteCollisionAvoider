@@ -251,6 +251,9 @@ def threshold_checks(ev: dict) -> dict:
 
     if tier == "needs_review":
         summary = "No tier could be predicted: the model output is missing or unusable."
+    elif not known:
+        summary = (f"The pipeline supplied tier {tier_label(tier)} but no predicted Pc or miss distance, so the "
+                   "classification basis is unavailable.")
     elif tier in ("critical", "elevated"):
         hits = [r for r in rows if r["triggered"] == "yes"]
         summary = (f"{tier_label(tier)} because " + " and ".join(
@@ -258,9 +261,15 @@ def threshold_checks(ev: dict) -> dict:
             f"{tier_label(tier)} as supplied by the risk pipeline; the values shown do not reproduce it.")
     else:
         summary = "SAFE: predicted Pc is below 1e-6 and the miss distance is above 5,000 m."
+    note = ""
+    if basis == "observed_at_cutoff":
+        note = ("The model did not predict a final miss distance. The distance criterion uses the miss distance "
+                "observed at the latest eligible CDM, as supplied by the pipeline.")
+    elif basis is None or not _finite(miss):
+        note = "No final miss distance was supplied, so the distance criterion cannot be checked."
     consistent = tier == "needs_review" or not known or len(known) < 2 or (implied or "none") == (
         "none" if tier == "safe" else tier)
-    return {"rows": rows, "summary": summary, "consistent": consistent}
+    return {"rows": rows, "summary": summary, "consistent": consistent, "basis_note": note}
 
 
 def reliability(ev: dict, used_flag_count: int = 0) -> dict:
@@ -304,32 +313,38 @@ def reliability(ev: dict, used_flag_count: int = 0) -> dict:
 
 
 NEXT_STEPS = {
-    "refer": "Refer for manoeuvre assessment",
-    "request": "Request additional data",
-    "monitor": "Continue monitoring",
+    "refer": "Refer for human manoeuvre assessment",
+    "prioritise": "Prioritise further monitoring or review",
+    "routine": "Routine monitoring",
+    "data": "Request additional or corrected information",
 }
 
 
-def next_step(ev: dict, rel: dict) -> dict:
-    """Operator triage suggestion. Decision support only; never recommends a manoeuvre."""
+def next_step(ev: dict, rel: dict, consistent: bool = True) -> dict:
+    """Suggested review action. Decision support only; never computes or approves a manoeuvre."""
     tier = ev.get("predicted_final_tier")
     reasons: list[str] = []
-    if tier == "critical":
+    if tier == "needs_review":
+        key = "data"
+        reasons.append("No usable prediction: check the input CDMs and the model output.")
+    elif not consistent:
+        key = "data"
+        reasons.append("The supplied tier does not match the supplied values; ask for corrected data.")
+    elif tier == "critical":
         key = "refer"
         reasons.append("Predicted final tier is CRITICAL.")
-        reasons.append("Specialists decide whether any manoeuvre is needed; this system does not.")
-    elif tier == "needs_review":
-        key = "request"
-        reasons.append("No usable prediction; check input CDMs and model output.")
+        reasons.append("Qualified specialists decide whether any manoeuvre is needed; this system does not.")
     elif tier == "elevated":
-        key = "request"
-        reasons.append("Predicted final tier is ELEVATED; updated CDMs would firm up the assessment before TCA.")
+        key = "prioritise"
+        reasons.append("Predicted final tier is ELEVATED: watch for new CDMs and review before TCA.")
     else:
-        key = "monitor"
+        key = "routine"
         reasons.append("Predicted final tier is SAFE.")
-        if rel["level"] == "low" or "1e-6" in rel["crosses"] or ev.get("quality_flags"):
-            key = "request"
-            reasons.append("Low confidence, a range spanning 1e-6, or data-quality flags: verify with more data.")
+        if rel["level"] == "low" or "1e-6" in rel["crosses"]:
+            key = "prioritise"
+            reasons.append("Low model confidence, or the Pc range spans 1e-6: keep under closer review.")
+    if key != "data" and ev.get("quality_flags"):
+        reasons.append("Data-quality flags are present; consider requesting corrected information.")
     if transition(ev.get("observed_tier"), tier) == "escalation":
         reasons.append("Risk is predicted to rise above the currently observed tier.")
     return {"key": key, "label": NEXT_STEPS[key], "reasons": reasons}

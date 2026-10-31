@@ -224,14 +224,24 @@ class DecisionSupport(unittest.TestCase):
 
     def test_next_steps(self):
         rel = {"level": "high", "crosses": []}
-        self.assertEqual(analytics.next_step(self.ev(predicted_final_tier="critical"), rel)["key"], "refer")
-        self.assertEqual(analytics.next_step(self.ev(predicted_final_tier="needs_review"), rel)["key"], "request")
-        self.assertEqual(analytics.next_step(self.ev(predicted_final_tier="elevated"), rel)["key"], "request")
-        self.assertEqual(analytics.next_step(self.ev(), rel)["key"], "monitor")
-        self.assertEqual(analytics.next_step(self.ev(quality_flags=["x"]), rel)["key"], "request")
+        step = lambda **kw: analytics.next_step(self.ev(**kw), rel)["key"]  # noqa: E731
+        self.assertEqual(step(predicted_final_tier="critical"), "refer")
+        self.assertEqual(step(predicted_final_tier="needs_review"), "data")
+        self.assertEqual(step(predicted_final_tier="elevated"), "prioritise")
+        self.assertEqual(step(), "routine")
+        self.assertEqual(analytics.next_step(self.ev(), {"level": "low", "crosses": []})["key"], "prioritise")
+        self.assertEqual(analytics.next_step(self.ev(predicted_final_tier="critical"), rel, consistent=False)["key"], "data")
         text = " ".join(analytics.next_step(self.ev(predicted_final_tier="critical"), rel)["reasons"]).lower()
         self.assertNotIn("perform", text)
         self.assertIn("does not", text)
+
+    def test_basis_notes(self):
+        obs = analytics.threshold_checks(self.ev(final_miss_distance_basis="observed_at_cutoff"))
+        self.assertIn("did not predict a final miss distance", obs["basis_note"])
+        none = analytics.threshold_checks(self.ev(predicted_final_tier="critical", predicted_final_log10_pc=float("nan"),
+                                                  predicted_final_miss_distance_m=float("nan"),
+                                                  final_miss_distance_basis=None))
+        self.assertIn("classification basis is unavailable", none["summary"])
 
     def test_every_synthetic_event_is_explainable(self):
         for key in ("synthetic_a", "synthetic_b"):
@@ -240,6 +250,53 @@ class DecisionSupport(unittest.TestCase):
                 t = analytics.threshold_checks(ev)
                 self.assertTrue(t["consistent"], (key, ev["event_id"]))
                 analytics.next_step(ev, analytics.reliability(ev))
+
+
+class EncounterView(unittest.TestCase):
+    def setUp(self):
+        from orbital.data import encounter_view
+        self.ev_mod = encounter_view
+        self.ds = adapters.load("synthetic_a")
+
+    def _event(self, eid):
+        ev = self.ds.events[self.ds.events["event_id"] == eid].iloc[0].to_dict()
+        hist = self.ds.history[self.ds.history["event_id"] == eid]
+        return ev, hist
+
+    def test_scene_uses_measured_positions(self):
+        ev, hist = self._event(166)
+        sc = self.ev_mod.scene(ev, hist)
+        self.assertTrue(sc["available"])
+        self.assertEqual(len(sc["points"]), len(hist))
+        axes = {"R": "relative_position_r_m", "T": "relative_position_t_m", "N": "relative_position_n_m"}
+        for p, rec in zip(sc["points"], self.ev_mod.ordered_history(hist).to_dict("records")):
+            self.assertAlmostEqual(p["x"], rec[axes[sc["h_axis"]]] / 1000)
+            self.assertAlmostEqual(p["y"], rec[axes[sc["v_axis"]]] / 1000)
+        self.assertEqual(sum(p["latest"] for p in sc["points"]), 1)
+        latest = next(p for p in sc["points"] if p["latest"])
+        self.assertEqual(int(latest["id"]), int(ev["cutoff_row_id"]))
+
+    def test_no_invented_predicted_miss(self):
+        ds_b = adapters.load("synthetic_b")
+        ev = ds_b.events.iloc[0].to_dict()
+        sc = self.ev_mod.scene(ev, ds_b.history[ds_b.history["event_id"] == ev["event_id"]])
+        self.assertIsNone(sc["predicted_miss_km"])
+        self.assertEqual(sc["predicted_miss_label"], "")
+
+    def test_missing_geometry_and_uncertainty(self):
+        ev, hist = self._event(166)
+        empty = self.ev_mod.scene(ev, hist.drop(columns=["relative_position_r_m"]).assign(relative_position_r_m=np.nan))
+        self.assertFalse(empty["available"])
+        self.assertFalse(self.ev_mod.scene(ev, hist.iloc[0:0])["available"])
+        self.assertFalse(self.ev_mod.uncertainty({"p_critical": float("nan")})["provided"])
+
+    def test_click_maps_back_to_cdm(self):
+        ev, hist = self._event(166)
+        rec = hist.iloc[2]
+        point = {"x": rec["relative_position_t_m"] / 1000, "y": rec["relative_position_n_m"] / 1000,
+                 "z": rec["relative_position_r_m"] / 1000}
+        self.assertEqual(self.ev_mod.nearest_cdm(hist, point), int(rec["row_id"]))
+        self.assertIsNone(self.ev_mod.nearest_cdm(hist, {"x": 0, "y": 0, "z": 0}))
 
 
 class GlobePopulation(unittest.TestCase):
