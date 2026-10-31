@@ -43,7 +43,7 @@ python scripts/train_final_tier.py             # grouped CV, selection, test eve
 python scripts/train_final_tier.py --finalize  # evaluate the holdout once (ledger-guarded)
 ```
 
-Read [reports/final_tier_report.md](reports/final_tier_report.md). Outputs: `outputs/test_event_predictions.csv` (one row per test event, tier probabilities, decision, persistence tier). The row-level models below remain for per-message estimated Pc in the dashboard.
+Read [reports/model_development.md](reports/model_development.md) for the full iteration story and headline holdout result, and [reports/final_tier_report.md](reports/final_tier_report.md) for the generated tables. Outputs: `outputs/test_event_predictions.csv` (one row per test event, tier probabilities, decision, persistence tier). The row-level models below remain for per-message estimated Pc in the dashboard.
 
 ## Modeling experiment
 
