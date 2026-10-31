@@ -100,6 +100,8 @@ export function EncounterScene({ points = [], hAxis = "T", vAxis = "R", droppedA
   const [ox, oy] = P(0, 0);
   const lp = latest ? P(latest.x, latest.y) : null;
   const scaleKm = niceStep((size.w * 0.16) / s);
+  // When the separation is only a few pixels, move labels apart so they stay readable.
+  const crowded = lp ? Math.hypot(lp[0] - ox, lp[1] - oy) < 90 : false;
   const fullscreen = () => (document.fullscreenElement ? document.exitFullscreen() : wrap.current.requestFullscreen());
 
   return (
@@ -141,7 +143,8 @@ export function EncounterScene({ points = [], hAxis = "T", vAxis = "R", droppedA
         {/* Separation at the latest eligible CDM (measured) */}
         {lp && <g>
           <line x1={ox} y1={oy} x2={lp[0]} y2={lp[1]} stroke="#e2e8f0" strokeWidth="1.2" strokeDasharray="5 5" opacity="0.8" />
-          <text x={(ox + lp[0]) / 2 + 10} y={(oy + lp[1]) / 2 - 10} className="es-sep" data-testid="separation-label">{separationLabel}</text>
+          <text x={crowded ? Math.max(ox, lp[0]) + 40 : (ox + lp[0]) / 2 + 10} y={crowded ? (oy + lp[1]) / 2 + 4 : (oy + lp[1]) / 2 - 10}
+            className="es-sep" data-testid="separation-label">{separationLabel}</text>
         </g>}
 
         {/* Successive CDM estimates (measured), connected in time order: not a path */}
@@ -162,12 +165,12 @@ export function EncounterScene({ points = [], hAxis = "T", vAxis = "R", droppedA
 
         {/* Icons (illustrative): primary at origin, secondary at the latest eligible CDM */}
         <Satellite x={ox} y={oy} />
-        <text x={ox} y={oy + 34} textAnchor="middle" className="es-label" fill={CYAN}>PRIMARY</text>
+        <text x={ox} y={crowded ? oy - 28 : oy + 34} textAnchor="middle" className="es-label" fill={CYAN}>PRIMARY</text>
         {lp && <g onClick={() => onSelect && onSelect(latest.id)} style={{ cursor: "pointer" }}
           onPointerEnter={() => setHover({ p: latest, x: lp[0], y: lp[1] })} onPointerLeave={() => setHover(null)}>
           <circle cx={lp[0]} cy={lp[1]} r="20" fill="none" stroke={AMBER} strokeWidth="1" opacity="0.5" />
           <Debris x={lp[0]} y={lp[1]} />
-          <text x={clamp(lp[0], 120, size.w - 120)} y={lp[1] + 34} textAnchor="middle" className="es-label"
+          <text x={clamp(lp[0], 120, size.w - 120)} y={lp[1] + (crowded ? 46 : 34)} textAnchor="middle" className="es-label"
             fill={AMBER}>SECONDARY · latest eligible CDM</text>
         </g>}
       </svg>

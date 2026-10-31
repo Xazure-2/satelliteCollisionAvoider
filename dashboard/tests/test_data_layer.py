@@ -235,6 +235,34 @@ class DecisionSupport(unittest.TestCase):
         self.assertNotIn("perform", text)
         self.assertIn("does not", text)
 
+    def test_model_more_cautious_than_thresholds(self):
+        # Real export: Critical when the forecast final distance <= 1.31 km; final Pc not forecast.
+        ev = self.ev(predicted_final_tier="critical", predicted_final_log10_pc=float("nan"),
+                     predicted_final_miss_distance_m=1200.0,
+                     alert_reasons=["Forecast raises the tier from elevated (observed at cutoff) to critical"])
+        t = analytics.threshold_checks(ev)
+        self.assertTrue(t["consistent"])
+        self.assertEqual(t["direction"], "over")
+        self.assertIn("more cautious", t["summary"])
+        self.assertEqual(t["stated_reasons"], ev["alert_reasons"])
+        rel = analytics.reliability(ev)
+        self.assertEqual(analytics.next_step(ev, rel, t["consistent"])["key"], "refer")
+
+    def test_under_classification_is_a_data_issue(self):
+        ev = self.ev(predicted_final_tier="safe", predicted_final_log10_pc=float("nan"),
+                     predicted_final_miss_distance_m=600.0)
+        t = analytics.threshold_checks(ev)
+        self.assertFalse(t["consistent"])
+        self.assertEqual(analytics.next_step(ev, analytics.reliability(ev), t["consistent"])["key"], "data")
+
+    def test_never_less_cautious_than_observed(self):
+        rel = {"level": "high", "crosses": []}
+        crit_now = analytics.next_step(self.ev(observed_tier="critical", predicted_final_tier="safe"), rel)
+        self.assertEqual(crit_now["key"], "refer")
+        self.assertIn("Currently observed CRITICAL", " ".join(crit_now["reasons"]))
+        elev_now = analytics.next_step(self.ev(observed_tier="elevated", predicted_final_tier="safe"), rel)
+        self.assertEqual(elev_now["key"], "prioritise")
+
     def test_basis_notes(self):
         obs = analytics.threshold_checks(self.ev(final_miss_distance_basis="observed_at_cutoff"))
         self.assertIn("did not predict a final miss distance", obs["basis_note"])

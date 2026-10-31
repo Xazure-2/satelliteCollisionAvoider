@@ -432,12 +432,18 @@ class AppState(rx.State):
         ev, _h = self._event()
         kind = analytics.transition(ev["observed_tier"], ev["predicted_final_tier"])
         return {"summary": checks["summary"], "consistent": "yes" if checks["consistent"] else "no",
-                "basis_note": checks["basis_note"],
+                "basis_note": checks["basis_note"], "direction": checks["direction"],
                 "escalation": {"escalation": "Escalation expected", "de-escalation": "De-escalation expected",
                                "unchanged": "No tier change expected"}.get(kind, "Escalation unknown (no observed tier)"),
                 "escalation_kind": kind,
                 "reliability": rel["level"], "probability": rel["probability"],
                 "step_key": step["key"], "step_label": step["label"]}
+
+    @rx.var
+    def stated_reasons(self) -> list[str]:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        d = self._decision()
+        return d[0]["stated_reasons"] if d else []
 
     @rx.var
     def reliability_notes(self) -> list[str]:

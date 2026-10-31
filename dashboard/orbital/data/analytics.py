@@ -249,27 +249,45 @@ def threshold_checks(ev: dict) -> dict:
     for r in rows:
         r["triggered"] = "yes" if tier in ("critical", "elevated") and r["level"] == tier else "no"
 
+    # The official thresholds give a LOWER BOUND on the tier from whichever values were supplied. A pipeline
+    # may be deliberately more cautious (e.g. a recall-tuned distance rule); a lower tier is a red flag.
+    stated = [str(r) for r in (ev.get("alert_reasons") or [])]
+    rank = {"safe": 0, "elevated": 1, "critical": 2}
+    implied_tier = {"none": "safe"}.get(implied, implied) if implied else None
+    direction = "match"
+    if tier in rank and implied_tier in rank:
+        direction = "under" if rank[tier] < rank[implied_tier] else ("over" if rank[tier] > rank[implied_tier] else "match")
+
     if tier == "needs_review":
         summary = "No tier could be predicted: the model output is missing or unusable."
     elif not known:
         summary = (f"The pipeline supplied tier {tier_label(tier)} but no predicted Pc or miss distance, so the "
                    "classification basis is unavailable.")
+    elif direction == "under":
+        summary = (f"The supplied tier {tier_label(tier)} is LOWER than the official thresholds imply "
+                   f"({tier_label(implied_tier)}) for the values shown. Treat this as a data issue.")
+    elif direction == "over":
+        summary = (f"{tier_label(tier)} as assigned by the model's alert rule. On the official thresholds alone, "
+                   f"the values shown give {tier_label(implied_tier)}; "
+                   + ("the model is more cautious here. See its stated reasons below." if stated
+                      else "the model gave no reasons, so the basis cannot be confirmed."))
     elif tier in ("critical", "elevated"):
         hits = [r for r in rows if r["triggered"] == "yes"]
-        summary = (f"{tier_label(tier)} because " + " and ".join(
-            f"{r['criterion'][0].lower()}{r['criterion'][1:]} {r['value']} meets the {tier} threshold" for r in hits) + ".") if hits else (
-            f"{tier_label(tier)} as supplied by the risk pipeline; the values shown do not reproduce it.")
+        summary = f"{tier_label(tier)} because " + " and ".join(
+            f"{r['criterion'][0].lower()}{r['criterion'][1:]} {r['value']} meets the {tier} threshold" for r in hits) + "."
     else:
-        summary = "SAFE: predicted Pc is below 1e-6 and the miss distance is above 5,000 m."
+        parts = [f"{r['criterion'][0].lower()}{r['criterion'][1:]} {r['value']}" for r in known]
+        summary = "SAFE: " + " and ".join(parts) + " are below the elevated thresholds." + (
+            "" if len(known) == 2 else " The other criterion was not supplied.")
     note = ""
     if basis == "observed_at_cutoff":
         note = ("The model did not predict a final miss distance. The distance criterion uses the miss distance "
                 "observed at the latest eligible CDM, as supplied by the pipeline.")
     elif basis is None or not _finite(miss):
         note = "No final miss distance was supplied, so the distance criterion cannot be checked."
-    consistent = tier == "needs_review" or not known or len(known) < 2 or (implied or "none") == (
-        "none" if tier == "safe" else tier)
-    return {"rows": rows, "summary": summary, "consistent": consistent, "basis_note": note}
+    consistent = direction != "under"
+    return {"rows": rows, "summary": summary, "consistent": consistent, "basis_note": note,
+            "direction": direction, "stated_reasons": stated}
 
 
 def reliability(ev: dict, used_flag_count: int = 0) -> dict:
@@ -323,8 +341,16 @@ NEXT_STEPS = {
 def next_step(ev: dict, rel: dict, consistent: bool = True) -> dict:
     """Suggested review action. Decision support only; never computes or approves a manoeuvre."""
     tier = ev.get("predicted_final_tier")
+    observed = ev.get("observed_tier")
     reasons: list[str] = []
-    if tier == "needs_review":
+    # Triage is never less cautious than the risk observed right now: a predicted de-escalation alone
+    # is not a reason to stand down.
+    order = ["safe", "elevated", "critical"]
+    if tier in order and observed in order and order.index(observed) > order.index(tier):
+        reasons.append(f"Currently observed {tier_label(observed)}; the predicted de-escalation to "
+                       f"{tier_label(tier)} is not enough on its own to lower the review level.")
+        tier = observed
+    if ev.get("predicted_final_tier") == "needs_review":
         key = "data"
         reasons.append("No usable prediction: check the input CDMs and the model output.")
     elif not consistent:
@@ -332,11 +358,13 @@ def next_step(ev: dict, rel: dict, consistent: bool = True) -> dict:
         reasons.append("The supplied tier does not match the supplied values; ask for corrected data.")
     elif tier == "critical":
         key = "refer"
-        reasons.append("Predicted final tier is CRITICAL.")
+        if ev.get("predicted_final_tier") == "critical":
+            reasons.append("Predicted final tier is CRITICAL.")
         reasons.append("Qualified specialists decide whether any manoeuvre is needed; this system does not.")
     elif tier == "elevated":
         key = "prioritise"
-        reasons.append("Predicted final tier is ELEVATED: watch for new CDMs and review before TCA.")
+        if ev.get("predicted_final_tier") == "elevated":
+            reasons.append("Predicted final tier is ELEVATED: watch for new CDMs and review before TCA.")
     else:
         key = "routine"
         reasons.append("Predicted final tier is SAFE.")

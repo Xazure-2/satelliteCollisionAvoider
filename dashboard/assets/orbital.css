@@ -486,3 +486,5 @@ body {
 .enc-insp-nav button { border: 1px solid var(--border); background: transparent; color: var(--text); border-radius: 5px; padding: 2px 4px;
   cursor: pointer; display: inline-flex; }
 .enc-insp-nav button:hover { border-color: var(--border-hi); color: var(--cyan); }
+.enc-reasons { margin-top: 10px; border-top: 1px dashed rgba(56,189,248,0.15); padding-top: 8px; }
+.enc-reasons-tag { font-size: 10px; letter-spacing: 0.14em; font-weight: 700; color: var(--muted); }

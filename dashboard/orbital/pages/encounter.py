@@ -197,9 +197,15 @@ def risk_panel() -> rx.Component:
         rx.foreach(AppState.threshold_rows, threshold_row),
         rx.cond(D["basis_note"] != "", rx.el.div(rx.icon("info", size=13), " ", D["basis_note"], class_name="enc-basis",
                                                  data_testid="basis-note"), rx.fragment()),
+        rx.cond(AppState.stated_reasons.length() > 0,
+                rx.el.div(rx.el.div("MODEL'S STATED REASONS", class_name="enc-reasons-tag"),
+                          rx.el.ul(rx.foreach(AppState.stated_reasons, lambda r: rx.el.li(r)), class_name="inv-notes"),
+                          class_name="enc-reasons", data_testid="stated-reasons"),
+                rx.fragment()),
         rx.cond(D["consistent"] == "no",
-                rx.el.div(rx.icon("triangle-alert", size=14), " The supplied tier does not match these values.",
-                          class_name="inv-warn"), rx.fragment()),
+                rx.el.div(rx.icon("triangle-alert", size=14), " The supplied tier is lower than the official thresholds "
+                          "imply for these values. Request corrected information before relying on it.",
+                          class_name="inv-warn", data_testid="under-warning"), rx.fragment()),
         open=True, class_name="enc-why",
     )
     step = rx.el.div(
