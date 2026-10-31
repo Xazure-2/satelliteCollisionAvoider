@@ -78,6 +78,8 @@ Validate finite values, nonnegative distances/sigmas/speeds, and required column
 
 ### Teammate 2 — Risk rules, event summaries, and integration logic
 
+> **Status: implemented** in `src/risk.py`, `src/events.py`, `scripts/build_dashboard_data.py`, `tests/test_risk.py` and `tests/test_pipeline.py`. Changes from the plan: events carry a *priority tier* combining the current assessment with the final-tier forecast (the forecast only applies while the latest message is 2+ days out), and windows use `time_to_tca` per the organizers. The dashboard can load `outputs/dashboard/*.csv` directly. See the README section "Risk rules and dashboard data".
+
 **Own:** `src/risk.py`, `src/events.py`, `tests/test_risk.py`, `tests/test_pipeline.py`.
 
 1. Implement the rules in section 3 as a pure function, independent of the model and UI. Include `risk_tier`, `alert_reasons`, `recommended_action`, and quality flags.
