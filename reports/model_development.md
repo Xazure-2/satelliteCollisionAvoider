@@ -6,6 +6,7 @@ This is the main document for Challenge #1. Part A explains the final system and
 |---|---|
 | [final_tier_report.md](final_tier_report.md) | Final-tier experiments, selection, **holdout result** (generated) |
 | [tier_probability_report.md](tier_probability_report.md) | Probability calibration, CV and holdout (generated) |
+| [final_pc_report.md](final_pc_report.md) | Final-Pc forecast for the dashboard, CV and holdout (generated) |
 | [final_tier_ensembles.md](final_tier_ensembles.md) | Ensembles, stacking, nested search, row-level Pc (generated) |
 | [experiment_v2.md](experiment_v2.md) | Row-level experiment behind the dashboard's per-message Pc (generated) |
 | [literature_review.md](literature_review.md) | Prior work and how it shaped the experiments |
@@ -71,6 +72,7 @@ event's messages ≥ 2 days out (permitted columns only; test risk never read)
 
 ## Supporting pieces (not part of the submission)
 
+- **Final-Pc forecast** (`src/final_pc.py`): forecasts each event's final Pc for the dashboard's "Predicted final Pc". It never changes the tier and is weak by necessity (section 8c).
 - **Per-message Pc model** (`src/row_model.py`): estimates Pc for every individual message, for the dashboard's risk-trend charts. Its Elevated-by-Pc calls are recall-heavy (98% recall, 29% precision in CV), so it is context, not the decision.
 - **Risk rules** (`src/risk.py`, `src/events.py`): apply the brief's thresholds to produce reasons ("miss distance 0.72 km is below 1 km"), recommended actions, time-to-TCA warning windows, the action queue and insight text.
 - **Dashboard** (`dashboard/`): shows predictions, probabilities, geometry and the held-out validation (`python scripts/export_dashboard_outputs.py` feeds it).
@@ -203,6 +205,15 @@ The brief asks for each event's final tier *with a probability*. The frozen mode
 - **The flag and the probability answer different questions:** the recall-tuned flag can mark an event Critical at P(Critical) around 0.2–0.4. On test events, flagged-Critical events have a median P(Critical) of 0.77.
 - **Holdout disclosure:** the probability layer was evaluated once on holdout forecast events, recorded separately in `artifacts/final_tier/probability_holdout.json`; nothing was tuned on it.
 
+## 8c. Final-Pc forecast (dashboard context)
+
+The dashboard has a "Predicted final Pc" field, which the frozen model cannot fill: it forecasts tier and miss distance, not Pc. `src/final_pc.py` adds a separate event-level regressor for the final log10(Pc), on the same features, folds and protocol ([final_pc_report.md](final_pc_report.md)). It never changes the tier or the probabilities.
+
+- **Final Pc is barely forecastable 2+ days out.** Only about 1% of forecast events end with Pc ≥ 1e-6, and 5 development events reach Pc ≥ 1e-4.
+- **The first attempt used the Kelvins floor of −6.001; we rejected it.** Its predictions piled up just above 1e-6, which would have shown about 2,300 events as Pc ≥ 1e-6 at 3% precision.
+- **Selected version:** with the target floored at −8 instead, the forecast reads "below 1e-6" for almost every event. On the holdout it caught 10% of events that end at Pc ≥ 1e-6, at 20% precision, halving the high-risk error of always answering the floor. It cannot anticipate Pc ≥ 1e-4.
+- **Display:** the dashboard shows Pc as odds; anything below 1 in 10 million reads "< 1 in 10M".
+
 ## 9. Submission and test predictions
 
 The submission is `submission/submission.csv` (`python scripts/make_submission.py`, described in [submission/README.md](../submission/README.md)): one row per test event with the predicted final tier, its probability, P(Safe/Elevated/Critical) and a manoeuvre-planning flag. `outputs/test_event_predictions.csv` holds the same 2,167 events: 228 Critical, 436 Elevated, 1,503 Safe, with P(Safe/Elevated/Critical), the predicted final miss distance, the persistence tier and latest geometry. The model raises 49 events from Elevated to Critical and 18 from Safe to Elevated, and never lowers a tier. Test events have no outcomes, so these are not scored. Test event IDs restart at 0 and are never joined to training IDs.
@@ -230,7 +241,7 @@ The row-level experiment v2 winner (physics features, target floored at −6.001
 - **The holdout is small** (76 Critical forecast events), so its intervals are wide.
 - **Tier probabilities are calibrated against historical final tiers,** not physical collision probabilities; Pc remains an input to the tier definition, not this output.
 - **The tier cut-offs are an operating point.** They can move (e.g. for fewer false alarms), with a new confusion matrix; the probabilities stay valid because they do not depend on the cut-offs.
-- **No final Pc forecast.** The model forecasts final tier and miss distance; the dashboard shows predicted final Pc as "not provided".
+- **The final-Pc forecast is weak.** Final Pc ≥ 1e-6 is rare and hard to anticipate from messages 2+ days out; the dashboard shows it as context only.
 - **Tier thresholds follow the hackathon brief,** not certification against a specific NASA or ESA standard.
 
 ## Reproduce
@@ -249,4 +260,5 @@ python scripts/make_submission.py              # submission/submission.csv
 python scripts/export_dashboard_outputs.py     # dashboard data
 python scripts/train_final_tier.py --finalize  # one-time holdout (already done; reruns reuse the saved result)
 python scripts/train_tier_probability.py       # tier probabilities; --holdout already done (reuses the saved result)
+python scripts/train_final_pc.py               # final-Pc forecast for the dashboard; --holdout already done
 ```

@@ -7,6 +7,7 @@ Prepared 31 October 2026. Team: three implementation owners plus you as integrat
 > - **Final-tier model** (scored task): `python scripts/train_final_tier.py` → `outputs/test_event_predictions.csv`, one row per test event. Holdout (evaluated once): Critical recall 0.882 vs 0.789 for persistence. See [reports/model_development.md](reports/model_development.md).
 > - **Per-message Pc** (dashboard): `python scripts/train_row_model.py` then `python scripts/predict.py` → `outputs/test_predictions.csv`.
 > - **Submission:** `submission/submission.csv`, one row per test event with the predicted final tier and its probability (`python scripts/make_submission.py`). **One command for everything:** `./run_all.sh`.
+> - **Dashboard:** the Reflex app in `dashboard/` shows the real model outputs by default. The early Streamlit prototype (`app.py`, `ui/`) and the synthetic demo datasets were removed, so references to Streamlit below are historical.
 > - The row-level `test_submission.csv` below is obsolete; section 6 is resolved. Sections 3–5 and 7–9 still guide the risk-rules and dashboard work; the [README](README.md) has the current output columns and integration snippets.
 
 ## 1. What we will ship
@@ -98,7 +99,7 @@ Validate finite values, nonnegative distances/sigmas/speeds, and required column
 
 ### Teammate 3 — Dashboard and visual story
 
-**Own:** `app.py`, optional `ui/` helpers only if needed, and `ui/DEMO_SCRIPT.md` (moved there; the Reflex dashboard's script is `dashboard/DEMO_SCRIPT.md`).
+**Own:** `dashboard/` (Reflex app) and `dashboard/DEMO_SCRIPT.md`. *(The original plan named a Streamlit `app.py`; that prototype was replaced and removed.)*
 
 1. Build a Streamlit layout from the shared sample output immediately; do not wait for model training.
 2. Add data source selection (test predictions or labeled training replay), object-type/tier filters, and a time-to-TCA filter. Display the source and replay context prominently.
@@ -160,10 +161,10 @@ python -m unittest discover -s tests
 python scripts/train_final_tier.py     # final-tier model + outputs/test_event_predictions.csv
 python scripts/train_row_model.py      # per-message Pc model
 python scripts/predict.py              # outputs/test_predictions.csv
-streamlit run app.py                   # planned (Teammate 3)
+cd dashboard && reflex run --env prod --single-port   # or ./run_all.sh for everything
 ```
 
-All but `streamlit run app.py` are implemented.
+All are implemented; `./run_all.sh` runs them in order.
 
 ## 6. Resolve the scoring ambiguity without blocking the MVP
 

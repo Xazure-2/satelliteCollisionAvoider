@@ -1,1 +1,1 @@
-"""Data layer: contract validation, adapters, synthetic data and analytics (no UI code)."""
+"""Data layer: contract validation, adapters, analytics and the synthetic globe population (no UI code)."""

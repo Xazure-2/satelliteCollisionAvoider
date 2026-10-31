@@ -55,13 +55,8 @@ def sidebar(active: str) -> rx.Component:
 def source_badge() -> rx.Component:
     return rx.cond(
         AppState.has_data,
-        rx.cond(
-            AppState.is_synthetic,
-            rx.el.span(rx.el.span(class_name="oi-dot"), "SYNTHETIC DEMO", class_name="oi-badge synthetic",
-                       data_testid="badge-synthetic"),
-            rx.el.span(rx.el.span(class_name="oi-dot"), "REAL MODEL DATA", class_name="oi-badge real",
-                       data_testid="badge-real"),
-        ),
+        rx.el.span(rx.el.span(class_name="oi-dot"), "REAL MODEL DATA", class_name="oi-badge real",
+                   data_testid="badge-real"),
         rx.el.span(rx.el.span(class_name="oi-dot"), "NO DATA", class_name="oi-badge error"),
     )
 
@@ -76,13 +71,6 @@ def topbar(title: str) -> rx.Component:
                   style={"padding_left": "18px", "border_left": "1px solid var(--border)"}),
         rx.el.div(class_name="oi-spacer"),
         source_badge(),
-        rx.el.select(
-            rx.foreach(AppState.source_options, lambda o: rx.el.option(o[1], value=o[0])),
-            value=AppState.source_key,
-            on_change=AppState.set_source,
-            class_name="oi-select",
-            data_testid="source-select",
-        ),
         rx.el.div(
             rx.el.span("Model ", rx.el.b(AppState.model_version)),
             rx.el.span("Data loaded ", rx.el.b(AppState.loaded_at)),
@@ -94,28 +82,13 @@ def topbar(title: str) -> rx.Component:
     )
 
 
-def synthetic_strip() -> rx.Component:
-    return rx.cond(
-        AppState.is_synthetic,
-        rx.el.div(
-            rx.icon("flask-conical", size=15),
-            rx.el.span(rx.el.b("Synthetic demonstration data. "),
-                       "Encounters, predictions and validation figures below are generated for the demo and are "
-                       "not real model results. Source: ", AppState.source_label),
-            class_name="oi-synbar",
-            data_testid="synthetic-strip",
-        ),
-        rx.fragment(),
-    )
-
-
 def shell(active: str, title: str, *content: rx.Component, needs_data: bool = True) -> rx.Component:
     body = rx.cond(AppState.has_data, rx.fragment(*content), error_block()) if needs_data else rx.fragment(*content)
     return rx.el.div(
         sidebar(active),
         rx.el.main(
             topbar(title),
-            rx.el.div(synthetic_strip() if needs_data else rx.fragment(), body, class_name="oi-content"),
+            rx.el.div(body, class_name="oi-content"),
             class_name="oi-main",
         ),
         class_name="oi-shell",

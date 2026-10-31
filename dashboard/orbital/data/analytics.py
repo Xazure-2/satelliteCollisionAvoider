@@ -33,12 +33,30 @@ def _finite(x) -> bool:
     return x is not None and isinstance(x, (int, float, np.floating)) and math.isfinite(x)
 
 
+PC_DISPLAY_FLOOR = -7.0  # below 1 in 10 million the digits carry no information (forecast floor is -8)
+
+
+def _compact(n: float) -> str:
+    """Two significant figures with K/M/B suffixes: 43,478 -> '43K', 2.1e6 -> '2.1M'."""
+    r = float(f"{n:.2g}")
+    for size, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if r >= size:
+            return f"{r / size:g}{suffix}"
+    return f"{r:g}"
+
+
 def fmt_pc(log10_pc, at_floor: bool = False) -> str:
+    """Collision probability as odds, the way conjunction assessment usually states it: '1 in 10K'."""
     if not _finite(log10_pc):
         return "—"
     if at_floor or log10_pc <= LOG10_PC_FLOOR + 1e-9:
         return "≈ 0"
-    return f"{10 ** log10_pc:.1e}"
+    if log10_pc <= PC_DISPLAY_FLOOR + 1e-9:
+        return "< 1 in 10M"
+    odds = 10 ** (-log10_pc)
+    if odds < 2:
+        return f"{10 ** log10_pc:.0%}"
+    return f"1 in {_compact(odds)}"
 
 
 def fmt_log(log10_pc) -> str:
@@ -57,7 +75,14 @@ def fmt_countdown(days) -> str:
 
 
 def fmt_prob(p) -> str:
-    return f"{p:.0%}" if _finite(p) else "—"
+    """Percentages without misleading extremes: 0.2% -> '<1%', 99.7% -> '>99%' (exact 0 and 1 kept)."""
+    if not _finite(p):
+        return "—"
+    if 0 < p < 0.005:
+        return "<1%"
+    if 0.995 <= p < 1:
+        return ">99%"
+    return f"{p:.0%}"
 
 
 def tier_label(tier) -> str:

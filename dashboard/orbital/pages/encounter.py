@@ -30,8 +30,7 @@ def header() -> rx.Component:
             rx.el.span("Encounter #", E["event_id"], class_name="enc-title", data_testid="event-id"),
             rx.el.span(E["object_type"], " · ", AppState.source_label, class_name="enc-sub"),
             rx.el.span("model ", rx.el.b(E["model_version"], class_name="mono"), class_name="enc-sub"),
-            rx.cond(AppState.is_synthetic, rx.el.span("SYNTHETIC", class_name="oi-stamp", data_testid="enc-synthetic"),
-                    rx.el.span("REAL DATA", class_name="oi-badge real")),
+            rx.el.span("REAL DATA", class_name="oi-badge real"),
             class_name="enc-head-left",
         ),
         rx.el.div(

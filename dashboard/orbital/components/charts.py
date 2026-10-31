@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
+from orbital.data.analytics import fmt_pc
 from orbital.data.contract import LOG10_PC_FLOOR, MIN_INPUT_TCA_DAYS
 
 CYAN, MUTED, GRID = "#38bdf8", "#7d91b6", "rgba(56,189,248,0.08)"
@@ -132,8 +133,7 @@ def encounter_geometry(hist: pd.DataFrame, ev: dict, reset: int = 0, height: int
     fig = _base("", height)
     h = h.assign(n_cdm=np.arange(1, len(h) + 1), r_km=h[RTN_COLS[0]] / 1000, t_km=h[RTN_COLS[1]] / 1000,
                  n_km=h[RTN_COLS[2]] / 1000,
-                 pc=[f"{10 ** v:.1e}" if np.isfinite(v) and v > -30 else ("≈ 0" if np.isfinite(v) else "—")
-                     for v in h["observed_log10_pc"].astype(float)])
+                 pc=[fmt_pc(v) for v in h["observed_log10_pc"].astype(float)])
     hover = ("CDM %{customdata[0]} · T−%{customdata[1]:.2f} d<br>R %{z:.3f} km · T %{x:.3f} km · N %{y:.3f} km"
              "<br>miss %{customdata[2]:,.0f} m · observed Pc %{customdata[3]}<extra>%{fullData.name}</extra>")
 

@@ -70,6 +70,9 @@ step "Training the final-tier model (cross-validation, selection, one-time holdo
 step "Calibrating final-tier probabilities"
 "$PY" scripts/train_tier_probability.py --holdout
 
+step "Forecasting final Pc (dashboard context; tiers unchanged)"
+"$PY" scripts/train_final_pc.py --holdout
+
 step "Training the per-message Pc model and scoring test messages"
 "$PY" scripts/train_row_model.py
 "$PY" scripts/predict.py
@@ -89,12 +92,12 @@ Outputs
   outputs/test_predictions.csv        per-message estimated Pc and tiers
   outputs/event_predictions.csv       dashboard data (events), with outputs/cdm_history.csv
   outputs/dashboard/                  risk-rule tables, action queues and insight text
-  reports/                            model_development.md, final_tier_report.md, tier_probability_report.md
+  reports/                            model_development.md (start here) and generated reports; see reports/README.md
 SUMMARY
 
 if [ "$DASHBOARD" -eq 1 ]; then
   step "Starting the dashboard on http://localhost:3000 (Ctrl+C to stop)"
-  echo "In the top bar, choose 'Real model outputs (outputs/)' and press reload."
+  echo "The dashboard loads the model outputs automatically."
   cd dashboard
   [ -x "$VENV/bin/reflex" ] || fail "Reflex is not installed in $VENV (pip install -r dashboard/requirements.txt)."
   exec "$VENV/bin/reflex" run --env prod --single-port

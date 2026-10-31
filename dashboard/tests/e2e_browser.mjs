@@ -25,12 +25,16 @@ page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 await page.goto(BASE + "/", { waitUntil: "networkidle" });
 await page.waitForSelector('[data-testid="kpi-total"]');
 await settle(page, 2500);
-check("synthetic badge shown", await page.locator('[data-testid="badge-synthetic"]').isVisible());
-check("synthetic data strip shown", await page.locator('[data-testid="synthetic-strip"]').isVisible());
+check("real data badge shown by default", await page.locator('[data-testid="badge-real"]').isVisible());
+check("no data-source selector or synthetic demo", !(await page.locator('[data-testid="source-select"]').count()) &&
+  !(await page.locator('[data-testid="badge-synthetic"]').count()));
 check("globe labelled synthetic", (await text(page, '[data-testid="globe-stamp"]')).includes("SYNTHETIC"));
 const totalA = await text(page, '[data-testid="kpi-total"] .oi-kpi-value');
 const critA = await text(page, '[data-testid="kpi-critical"] .oi-kpi-value');
-check("dataset A totals", totalA === "220", `total=${totalA} critical=${critA}`);
+check("real outputs loaded", Number(totalA.replace(/,/g, "")) > 0, `total=${totalA} critical=${critA}`);
+const predPc = await page.locator('[data-testid="queue-row"] td:nth-child(3)').allInnerTexts();
+check("queue Pred. Pc column filled and readable", predPc.length > 0 && predPc.every((t) => t.trim() && t.trim() !== "—" && !/e-\d/.test(t)),
+  predPc.slice(0, 3).join(" | "));
 
 await page.click('[data-testid="kpi-critical"]');
 await settle(page);
@@ -38,22 +42,6 @@ const tiers = await page.locator('[data-testid="queue-row"] td:nth-child(2) .tie
 check("critical card filters queue", tiers.length > 0 && tiers.every((t) => t.includes("CRITICAL")), `${tiers.length} rows`);
 await page.click('[data-testid="kpi-total"]');
 await settle(page);
-
-await page.selectOption('[data-testid="source-select"]', "synthetic_b");
-await settle(page, 2000);
-const totalB = await text(page, '[data-testid="kpi-total"] .oi-kpi-value');
-const critB = await text(page, '[data-testid="kpi-critical"] .oi-kpi-value');
-check("cards update for dataset B", totalB === "90" && critB !== critA, `total=${totalB} critical=${critB}`);
-
-await page.selectOption('[data-testid="source-select"]', "real");
-await settle(page, 2000);
-const err = page.locator('[data-testid="data-error"]');
-check("missing real outputs → clear error", (await err.isVisible()) && (await err.innerText()).includes("event_predictions.csv"),
-  (await err.innerText()).split("\n")[0]);
-check("no synthetic substitution for real source", !(await page.locator('[data-testid="badge-synthetic"]').count()));
-await page.getByText("Show synthetic demo A instead").click();
-await settle(page, 2000);
-check("recover to synthetic A", (await text(page, '[data-testid="kpi-total"] .oi-kpi-value')) === "220");
 
 // ---------------------------------------------------------------- risk page: filters, sort, export
 await page.click('[data-testid="nav-risk"]');
@@ -143,9 +131,9 @@ await settle(page, 2500);
 let enc = await read();
 check("row click opens encounter", enc.id === "Encounter #" + firstId, enc.id);
 const headText = await text(page, ".enc-head");
-check("header: object type, data source, model version, synthetic flag",
-  /PAYLOAD|DEBRIS|ROCKET BODY|UNKNOWN/.test(headText) && headText.includes("Synthetic demo A") &&
-  headText.includes("SYNTHETIC-A-v2") && (await page.locator('[data-testid="enc-synthetic"]').isVisible()), headText.replace(/\s+/g, " ").slice(0, 90));
+check("header: object type, data source, model version",
+  /PAYLOAD|DEBRIS|ROCKET BODY|UNKNOWN/.test(headText) && headText.includes("Model outputs") &&
+  headText.includes("final-tier"), headText.replace(/\s+/g, " ").slice(0, 90));
 check("current observed vs AI-predicted final shown separately",
   enc.panel.includes("CURRENT OBSERVED") && enc.panel.includes("PREDICTED FINAL") && enc.escalation.length > 0, enc.escalation);
 consistent(enc, "1");
@@ -305,51 +293,15 @@ consistent(enc, "held-out");
 const hollow = await page.evaluate(() => [...document.querySelectorAll('[data-testid="cdm-marker"] circle')].some((c) => c.getAttribute("fill") === "none" && c.getAttribute("r") !== "9"));
 check("held-out: post-cutoff CDMs drawn distinctly (hollow)", hollow);
 
-// dataset B at 1440×900: sparse fields, no invented values
 await page.setViewportSize({ width: 1440, height: 900 });
-await page.selectOption('[data-testid="source-select"]', "synthetic_b");
-await settle(page, 2500);
-await page.click('[data-testid="nav-risk"]');
-await page.waitForSelector('[data-testid="tier-needs_review"]');
-await page.click('[data-testid="scope-test"]');
-await page.click('[data-testid="tier-critical"]');
-await settle(page, 1500);
-await page.locator('[data-testid="queue-row"]').first().click();
-await page.waitForURL("**/encounter");
-await page.waitForSelector('[data-testid="encounter-scene"]');
-await settle(page, 2500);
-enc = await read();
-check("B: predicted final miss distance not invented", enc.predMiss === "Not provided" &&
-  (await page.locator('[data-testid="predicted-ring"]').count()) === 0, enc.predMiss);
-check("B: observed-miss substitution explained", (await text(page, '[data-testid="basis-note"]')).includes("did not predict a final miss distance"));
-check("B: 'Uncertainty not provided'", await page.locator('[data-testid="uncertainty-none"]').isVisible());
-const missTraces = await page.evaluate(() => document.querySelector('[data-testid="chart-miss"] .js-plotly-plot').data.map((t) => t.name));
-check("B: no predicted point on miss chart", !missTraces.some((n) => /prediction/i.test(n)), missTraces.join(" | "));
-consistent(enc, "B critical");
 await noOverlap("1440×900");
-await page.click('[data-testid="nav-risk"]');
-await page.waitForSelector('[data-testid="tier-needs_review"]');
-await page.click('[data-testid="tier-needs_review"]');
-await settle(page, 1500);
-await page.locator('[data-testid="queue-row"]').first().click();
-await page.waitForURL("**/encounter");
-await page.waitForSelector('[data-testid="summary-panel"]');
-await settle(page, 2500);
-enc = await read();
-check("needs-review: no prediction invented, data request suggested",
-  enc.step === "Request additional or corrected information" && enc.pc === "—", `${enc.predicted} Pc ${enc.pc} ${enc.step}`);
 await page.setViewportSize({ width: 1920, height: 1080 });
-await page.click('[data-testid="nav-risk"]');
-await page.waitForSelector('[data-testid="tier-all"]');
-await page.click('[data-testid="tier-all"]');
-await page.selectOption('[data-testid="source-select"]', "synthetic_a");
-await settle(page, 2000);
 
 // ---------------------------------------------------------------- validation
 await page.click('[data-testid="nav-validation"]');
 await page.waitForSelector('[data-testid="confusion-matrix"]');
 await settle(page);
-check("validation labelled as demonstration", await page.locator('[data-testid="validation-demo"]').isVisible());
+check("validation computed from held-out events", await page.locator('[data-testid="validation-real"]').isVisible());
 const cells = (await page.locator('[data-testid="confusion-matrix"] td').allInnerTexts()).map(Number);
 const n = await text(page, ".oi-kpi .oi-kpi-value");
 check("confusion matrix sums to evaluated events", cells.reduce((a, b) => a + b, 0) === Number(n), `sum=${cells.reduce((a, b) => a + b, 0)} n=${n}`);
