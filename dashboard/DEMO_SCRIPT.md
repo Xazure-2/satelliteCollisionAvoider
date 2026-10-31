@@ -46,21 +46,26 @@ Point at the **Escalations** count and the **2–3 d / 3–5 d / 5–7 d** windo
 
 ### 0:55–1:45 · Investigate one encounter (Encounter Analysis)
 
-Click the escalation row. Walk down the **right panel**, which answers the operator's five questions in order:
+Click the escalation row. Read the **right panel** from top to bottom:
 
-1. **How dangerous?** Observed ELEVATED → predicted CRITICAL. With real outputs the panel shows the predicted final **miss distance** (our model forecasts distance; final Pc shows "not provided", because 831 of 834 Critical training events were distance-driven).
-2. **How soon?** The T− countdown, measured from the last eligible message. It is relative, not a live clock.
-3. **Why?** The threshold rows show which criterion fired. With real outputs, the event's reasons explain the tier:
+1. **How dangerous, and is it escalating?** CURRENT OBSERVED: ELEVATED → PREDICTED FINAL: CRITICAL, "Escalation expected".
+2. **How much time?** The T− countdown, measured from the last eligible message. It is relative, not a live clock.
+3. **Key measurements:** each card says whether it is OBSERVED or PREDICTED. With real outputs, the predicted final
+   **miss distance** card shows the model's forecast, and predicted final Pc shows "—". Our model forecasts distance,
+   because 831 of 834 Critical training events were distance-driven. In synthetic dataset B the predicted miss distance
+   reads "Not provided", because we never invent it.
+4. **Why this tier?** The threshold rows show which criterion fired. With real outputs, the event's reasons explain the tier:
    the model flags Critical when the forecast final distance is ≤ 1.31 km (tuned to catch dangerous events early), and
    never goes below the tier of the latest observed distance. So for forecasts between 1.0 and 1.31 km the threshold
    check may say the 1 km rule "does not reproduce" the tier; point to the reasons list and say why.
-4. **How reliable?** Taken from the model's calibrated probability for the predicted tier. "Flagged Critical with P(critical) 31%"
-   means "plan for it; about one in three such events ends Critical". The flag favours recall; the probability is the confidence.
-5. **What next?** *Refer for manoeuvre assessment*: "a specialist decides, the system does not."
+5. **How reliable?** The model-uncertainty bars show the model's calibrated probabilities. "Flagged Critical with
+   P(critical) 31%" means "plan for it; about one in three such events ends Critical". The flag favours recall; the
+   probability is the confidence.
+6. **Next step:** *Refer for human manoeuvre assessment*. "We suggest a review. We do not plan manoeuvres; a specialist decides."
 
-Then rotate the **3D geometry** on the left. Say plainly: "relative to our satellite, not an orbit." Show the latest
-eligible message, and say that the cyan sphere is the predicted miss *distance* (the model gives no direction).
-Open the **Risk evolution** tab to show the 2-day cutoff and the prediction star.
+On the **left**, hover over a few CDM markers, then click one to inspect it. Say: "Each dot is a measured relative
+position. The Earth and the icons are only context." Switch to **Measured Geometry** and rotate the 3-D view to
+show the same measurements without any decoration.
 
 ### 1:45–2:20 · Credibility (Model Validation)
 

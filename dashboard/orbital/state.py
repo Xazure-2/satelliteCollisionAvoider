@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import reflex as rx
 
 from orbital.components import charts
-from orbital.data import adapters, analytics
+from orbital.data import adapters, analytics, encounter_view
 from orbital.data.adapters import DataUnavailable, Dataset
 from orbital.data.contract import HELD_OUT_SPLITS
 from orbital.data.synthetic_globe import make_population
@@ -71,6 +71,12 @@ class AppState(rx.State):
     sort_key: str = "priority"
     sort_desc: bool = False
     selected_key: str = ""
+
+    # Encounter Analysis workspace.
+    view_mode: str = "illustrative"
+    selected_cdm: str = ""
+    scene_reset: int = 0
+    geometry_reset: int = 0
 
     # Globe (synthetic orbital population).
     globe_size: int = 2500
@@ -384,19 +390,20 @@ class AppState(rx.State):
     def risk_figure(self) -> go.Figure:
         _ = (self.source_key, self.data_version, self.selected_key, self.queue)
         ev, hist = self._event()
-        return charts.risk_evolution(hist, ev) if ev else charts.empty("Risk evolution", "Select an encounter")
+        return charts.risk_evolution(hist, ev, 280) if ev else charts.empty("Risk evolution", "Select an encounter")
 
     @rx.var
     def miss_figure(self) -> go.Figure:
         _ = (self.source_key, self.data_version, self.selected_key, self.queue)
         ev, hist = self._event()
-        return charts.miss_evolution(hist, ev) if ev else charts.empty("Miss distance", "Select an encounter")
+        return charts.miss_evolution(hist, ev, 280) if ev else charts.empty("Miss distance", "Select an encounter")
 
     @rx.var
     def geometry_figure(self) -> go.Figure:
-        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue, self.geometry_reset)
         ev, hist = self._event()
-        return charts.encounter_geometry(hist, ev) if ev else charts.empty("", "Select an encounter", 600)
+        return (charts.encounter_geometry(hist, ev, self.geometry_reset, None) if ev
+                else charts.empty("", "Select an encounter", 560))
 
     # ---------------------------------------------------------------- investigation decision support
     def _decision(self) -> tuple[dict, dict, dict] | None:
@@ -406,7 +413,8 @@ class AppState(rx.State):
         used = hist[hist["used_for_prediction"]] if not hist.empty else hist
         flagged = int(sum(1 for f in used["quality_flags"] if f)) if not used.empty else 0
         rel = analytics.reliability(ev, flagged)
-        return analytics.threshold_checks(ev), rel, analytics.next_step(ev, rel)
+        checks = analytics.threshold_checks(ev)
+        return checks, rel, analytics.next_step(ev, rel, checks["consistent"])
 
     @rx.var
     def threshold_rows(self) -> list[dict[str, str]]:
@@ -421,9 +429,21 @@ class AppState(rx.State):
         if d is None:
             return {}
         checks, rel, step = d
+        ev, _h = self._event()
+        kind = analytics.transition(ev["observed_tier"], ev["predicted_final_tier"])
         return {"summary": checks["summary"], "consistent": "yes" if checks["consistent"] else "no",
+                "basis_note": checks["basis_note"], "direction": checks["direction"],
+                "escalation": {"escalation": "Escalation expected", "de-escalation": "De-escalation expected",
+                               "unchanged": "No tier change expected"}.get(kind, "Escalation unknown (no observed tier)"),
+                "escalation_kind": kind,
                 "reliability": rel["level"], "probability": rel["probability"],
                 "step_key": step["key"], "step_label": step["label"]}
+
+    @rx.var
+    def stated_reasons(self) -> list[str]:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        d = self._decision()
+        return d[0]["stated_reasons"] if d else []
 
     @rx.var
     def reliability_notes(self) -> list[str]:
@@ -458,6 +478,100 @@ class AppState(rx.State):
     @rx.event
     def prev_event(self):
         self._step_event(-1)
+
+
+    # ---------------------------------------------------------------- encounter visualisation
+    @rx.event
+    def set_view_mode(self, mode: str):
+        self.view_mode = mode
+
+    @rx.event
+    def select_cdm(self, row_id: str):
+        self.selected_cdm = str(row_id)
+
+    @rx.event
+    def select_cdm_point(self, points: list[dict]):
+        """Click on the measured 3-D view: map the clicked point back to its CDM."""
+        if not points:
+            return
+        _ev, hist = self._event()
+        row = encounter_view.nearest_cdm(hist, points[0])
+        if row is not None:
+            self.selected_cdm = str(row)
+
+    @rx.event
+    def step_cdm(self, delta: int):
+        """Step the inspector through CDMs in time order (works even when markers overlap)."""
+        _ev, hist = self._event()
+        if hist.empty:
+            return
+        ids = encounter_view.ordered_history(hist)["row_id"].astype(str).tolist()
+        current = self.cdm_detail.get("row_id", ids[-1])
+        i = ids.index(current) if current in ids else len(ids) - 1
+        self.selected_cdm = ids[(i + delta) % len(ids)]
+
+    @rx.event
+    def reset_encounter_view(self):
+        if self.view_mode == "measured":
+            self.geometry_reset += 1
+        else:
+            self.scene_reset += 1
+
+    def _scene(self) -> dict:
+        ev, hist = self._event()
+        return encounter_view.scene(ev, hist) if ev else encounter_view.scene({}, pd.DataFrame())
+
+    @rx.var
+    def scene_points(self) -> list[dict]:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        return self._scene()["points"]
+
+    @rx.var
+    def scene_meta(self) -> dict[str, str]:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        sc = self._scene()
+        return {"available": "yes" if sc["available"] else "no", "h_axis": sc["h_axis"], "v_axis": sc["v_axis"],
+                "dropped_axis": sc["dropped_axis"], "plane_note": sc["plane_note"],
+                "separation": sc["separation_label"], "ring_label": sc["predicted_miss_label"]}
+
+    @rx.var
+    def scene_ring_km(self) -> float | None:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        return self._scene()["predicted_miss_km"]
+
+    @rx.var
+    def cdm_detail(self) -> dict[str, str]:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue, self.selected_cdm)
+        ev, hist = self._event()
+        if ev is None or hist.empty:
+            return {}
+        h = encounter_view.ordered_history(hist)
+        latest = encounter_view.latest_eligible_row(ev, h)
+        pick = h[h["row_id"].astype(str) == self.selected_cdm]
+        if pick.empty:
+            pick = h[h["row_id"] == latest] if latest is not None else h.tail(1)
+        return encounter_view.cdm_details(pick.iloc[0].to_dict(), latest)
+
+    @rx.var
+    def selected_cdm_id(self) -> str:
+        return self.cdm_detail.get("row_id", "")
+
+    @rx.var
+    def latest_cdms(self) -> list[dict[str, str]]:
+        """The six most recent CDMs, oldest first (compact evidence table)."""
+        return self.history_rows[-6:]
+
+    @rx.var
+    def uncertainty_probs(self) -> list[dict[str, str]]:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        ev, _h = self._event()
+        return encounter_view.uncertainty(ev)["probs"] if ev else []
+
+    @rx.var
+    def uncertainty_interval(self) -> str:
+        _ = (self.source_key, self.data_version, self.selected_key, self.queue)
+        ev, _h = self._event()
+        return encounter_view.uncertainty(ev)["interval"] if ev else ""
 
     @rx.var
     def history_rows(self) -> list[dict[str, str]]:

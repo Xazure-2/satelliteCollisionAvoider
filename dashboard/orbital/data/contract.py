@@ -213,10 +213,12 @@ def validate_events(frame: pd.DataFrame) -> tuple[pd.DataFrame, Validation]:
     floor = df["predicted_final_log10_pc"] <= LOG10_PC_FLOOR + 1e-9
     at_floor = df["predicted_final_at_floor"]
     df["predicted_final_at_floor"] = floor | at_floor.astype(str).str.lower().isin(["true", "1"])
-    missing_pred = df["predicted_final_log10_pc"].isna() & (df["predicted_final_tier"] != "needs_review")
+    missing_pred = (df["predicted_final_log10_pc"].isna() & df["predicted_final_miss_distance_m"].isna()
+                    & (df["predicted_final_tier"] != "needs_review"))
     if missing_pred.any():
         report.warnings.append(
-            f"{int(missing_pred.sum())} event(s) have a predicted tier but no predicted Pc value."
+            f"{int(missing_pred.sum())} event(s) have a predicted tier but neither a predicted Pc nor a predicted "
+            "miss distance, so their classification basis cannot be shown."
         )
     if df["observed_tier"].isna().all():
         report.warnings.append("No observed tier supplied: 'current observed' risk shows as unavailable.")
