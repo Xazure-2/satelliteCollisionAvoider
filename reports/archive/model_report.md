@@ -1,6 +1,6 @@
 # Row-level collision-risk model report
 
-> **Superseded (historical record).** This report documents the first modelling pass (M3, row-level regression), kept for the audit trail. Later reviews found that a one-line `max_risk_estimate` rule beat M3, that the −30 placeholder distorted training, and that the "extreme" sigmas are placeholders (corrected below). The organizers then clarified that the scored task is each event's final tier. See [model_development.md](model_development.md) for the current models and results.
+> **Superseded (historical record).** This report documents the first modelling pass (M3, row-level regression), kept for the audit trail. Later reviews found that a one-line `max_risk_estimate` rule beat M3, that the −30 placeholder distorted training, and that the "extreme" sigmas are placeholders (corrected below). The organizers then clarified that the scored task is each event's final tier. See [model_development.md](../model_development.md) for the current models and results.
 
 ## Result and decision
 

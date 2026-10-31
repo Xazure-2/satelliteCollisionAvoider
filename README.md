@@ -43,7 +43,7 @@ Reruns reuse saved holdout results; they never re-evaluate a different model on 
 | `outputs/test_predictions.csv` | Per-message estimated Pc and tiers |
 | `outputs/event_predictions.csv`, `outputs/cdm_history.csv` | Dashboard data: test events plus held-out training events with actual outcomes |
 | `outputs/dashboard/` | Risk-rule tables, action queues and insight text |
-| `reports/` | [model_development.md](reports/model_development.md) (the full story), [final_tier_report.md](reports/final_tier_report.md), [tier_probability_report.md](reports/tier_probability_report.md), [literature_review.md](reports/literature_review.md) |
+| `reports/` | [model_development.md](reports/model_development.md) (start here: the final system, results and full story), plus generated tables; [reports/README.md](reports/README.md) indexes every report |
 
 ## How it works
 
@@ -74,7 +74,7 @@ train_data.csv ──► EDA notebook ──► frozen 70/15/15 event split (see
 - **Validation:** 5-fold event-grouped cross-validation for every choice, then one holdout evaluation. Every result is compared with the persistence baseline (the current tier carried forward), which was hard to beat in the ESA Kelvins challenge too.
 - **Inputs:** only the permitted telemetry columns. Test `risk` is never read.
 
-[reports/model_development.md](reports/model_development.md) tells the full iteration story, with every experiment and result.
+[reports/model_development.md](reports/model_development.md) explains the final system in Part A (including how the probability layer sits on top of the frozen tier model) and the full iteration story in Part B. [reports/README.md](reports/README.md) lists every report and the command that generates it. Demo scripts: [dashboard/DEMO_SCRIPT.md](dashboard/DEMO_SCRIPT.md) (Reflex, main) and [ui/DEMO_SCRIPT.md](ui/DEMO_SCRIPT.md) (Streamlit fallback).
 
 ## Interpretation
 
@@ -88,7 +88,7 @@ Every test message is 2–7 days before closest approach, so a real next-24-hour
 |---|---|---|---|---|
 | **Scored task:** each event's final tier, with a probability, from messages >= 2 days out | Distance-change regressor + persistence floor; calibrated P(Safe/Elevated/Critical) | `python scripts/train_final_tier.py` then `python scripts/train_tier_probability.py` | `outputs/test_event_predictions.csv` (one row per test event) | [model_development.md](reports/model_development.md), [final_tier_report.md](reports/final_tier_report.md) |
 | **Dashboard:** estimated Pc per message | Row-level v2: physics features, target floored at −6.001, capped at `max_risk_estimate` | `python scripts/train_row_model.py` then `python scripts/predict.py` | `outputs/test_predictions.csv` (one row per test message) | [experiment_v2.md](reports/experiment_v2.md) |
-| Historical first pass | M3 row-level regressor (superseded) | `python scripts/train.py` (blocked: holdout already opened) | `artifacts/selected_model.joblib` | [model_report.md](reports/model_report.md) |
+| Historical first pass | M3 row-level regressor (superseded) | `python scripts/train.py` (blocked: holdout already opened) | `artifacts/selected_model.joblib` | [archive/model_report.md](reports/archive/model_report.md) |
 
 Start with [reports/model_development.md](reports/model_development.md): it tells the full iteration story and gives the headline holdout result (Critical recall 0.882 vs 0.789 for persistence on held-out forecast events).
 
